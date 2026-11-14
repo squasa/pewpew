@@ -1,0 +1,20 @@
+{
+ "p01:einsteinium": {
+  "canonical": "Einsteinium",
+  "tierKey": "krillion",
+  "desc": "chemical element with symbol Es and atomic number 99",
+  "sitelinks": 138
+ },
+ "p27:splindle": null,
+ "p27:generator": null,
+ "p67:flintstones": null,
+ "p35:rialt": null,
+ "p35:riald": null,
+ "p01:gold": {
+  "canonical": "Gold",
+  "tierKey": "rare",
+  "desc": "chemical element with symbol Au and atomic number 79; a dense, malleable, and corrosion-resistant precious metal widely used as currency, in jewelry, electronics, and as a financial reserve asset",
+  "sitelinks": 277
+ },
+ "p43:supima": null
+}

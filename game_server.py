@@ -448,8 +448,7 @@ class GameServer:
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._server: asyncio.AbstractServer | None = None
-        self._qr_cache_url: str | None = None
-        self._qr_cache_bgr: np.ndarray | None = None
+        self._qr_cache: dict[tuple[str, str, int], np.ndarray] = {}
 
     def set_handlers(
         self,
@@ -479,14 +478,26 @@ class GameServer:
     @property
     def host_phone_url(self) -> str:
         base = self.share_url
-        return f"{base}&role=host"
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}role=host"
 
-    def qr_bgr(self, box_px: int = 190) -> np.ndarray:
-        url = self.share_url
-        if self._qr_cache_url != url or self._qr_cache_bgr is None or self._qr_cache_bgr.shape[0] != box_px:
-            self._qr_cache_url = url
-            self._qr_cache_bgr = render_qr_bgr(url, box_px=box_px)
-        return self._qr_cache_bgr
+    def qr_bgr(self, box_px: int = 164, role: str = "guest") -> np.ndarray:
+        url = self.host_phone_url if role == "host" else self.share_url
+        key = (role, url, int(box_px))
+        cached = self._qr_cache.get(key)
+        if cached is not None:
+            return cached
+        img = None
+        for cand_url in (url, self.lan_url):
+            try:
+                img = render_qr_bgr(cand_url, box_px=box_px)
+                break
+            except Exception:
+                img = None
+        if img is None:
+            img = np.full((box_px, box_px, 3), 245, dtype=np.uint8)
+        self._qr_cache[key] = img
+        return img
 
     def start(self) -> None:
         if self._thread is not None:
@@ -875,24 +886,37 @@ class GameServer:
                     if msg.get("type") == "set_profile":
                         new_name = str(msg.get("name", "")).strip()[:24]
                         req_switch = str(msg.get("role", "")).strip().lower()
+                        swapped_peer: tuple[str, str, str] | None = None
                         with self._clients_lock:
                             if new_name:
                                 client.name = new_name
                             if req_switch in ("guest", "host") and req_switch != client.role:
-                                taken = any(
-                                    cid != client_id and c.role == req_switch
-                                    for cid, c in self._clients.items()
+                                old_role = client.role
+                                other_client = next(
+                                    (c for cid, c in self._clients.items() if cid != client_id and c.role == req_switch),
+                                    None,
                                 )
-                                if not taken:
-                                    client.role = req_switch
-                                    await client.queue.put(json.dumps({
+                                client.role = req_switch
+                                self._enqueue_nowait(client, json.dumps({
+                                    "type": "welcome",
+                                    "clientId": client_id,
+                                    "role": client.role,
+                                    "name": client.name,
+                                    "room": self.room_code,
+                                }))
+                                if other_client is not None:
+                                    other_client.role = old_role
+                                    self._enqueue_nowait(other_client, json.dumps({
                                         "type": "welcome",
-                                        "clientId": client_id,
-                                        "role": client.role,
-                                        "name": client.name,
+                                        "clientId": other_client.client_id,
+                                        "role": other_client.role,
+                                        "name": other_client.name,
                                         "room": self.room_code,
                                     }))
+                                    swapped_peer = (other_client.client_id, other_client.role, other_client.name)
                         if self._on_connect:
+                            if swapped_peer is not None:
+                                self._on_connect(*swapped_peer)
                             self._on_connect(client_id, client.role, client.name)
                         continue
                     if self._on_message:

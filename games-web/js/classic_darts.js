@@ -81,12 +81,13 @@ export class ClassicDartsView {
     }
     this._cd = cd;
 
-    const sig = `${cd.phase}|${cd.turn}|${cd.dartsLeft}|${cd.scores.guest}|${cd.scores.host}|${cd.doubleOut}|${cd.status}|${cd.winner}|${cd.hitsThisTurn?.length || 0}`;
+    const sig = `${cd.phase}|${cd.turn}|${cd.dartsLeft}|${cd.scores.guest}|${cd.scores.host}|${cd.doubleOut}|${cd.status}|${cd.winner}|${this.myRole()}|${cd.hitsThisTurn?.length || 0}`;
     if (sig !== this._lastSig || !this._canvas) {
       this._lastSig = sig;
       this._renderDOM(cd);
     } else if (!this._isMyTurn(cd) && this._liveAim) {
-      this._updatePowerBar(Number(this._liveAim.power || 0), "HIM AIMING");
+      const opp = this.myRole() === "host" ? "HER" : "HIM";
+      this._updatePowerBar(Number(this._liveAim.power || 0), `${opp} AIMING`);
     }
     this._syncStuckDarts(cd);
   }
@@ -317,14 +318,19 @@ export class ClassicDartsView {
     }
 
     const mine = this._isMyTurn(cd);
+    const oppLbl = this.myRole() === "host" ? "Her" : "Him";
     this._container.querySelector("#cd-gs").textContent = String(cd.scores.guest);
     this._container.querySelector("#cd-hs").textContent = String(cd.scores.host);
     this._container.querySelector("#cd-left").textContent = String(cd.dartsLeft);
     this._container.querySelector("#cd-turn").textContent =
-      cd.turn === "host" ? "HIM'S TURN (WEBCAM)" : "HER TURN";
+      cd.phase === "finished"
+        ? (cd.winner === "guest" ? "HER WINS!" : "HIM WINS!")
+        : mine
+        ? `YOUR TURN (${cd.turn === "guest" ? "P1" : "P2"})`
+        : (cd.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
     this._container.querySelector("#cd-dbl").checked = !!cd.doubleOut;
     this._container.querySelector("#cd-status").textContent =
-      cd.status || (mine ? "Swipe UP smoothly toward a sector to flick!" : "Wait for Him on webcam...");
+      cd.status || (mine ? "Swipe UP smoothly toward a sector to flick!" : `Watching ${oppLbl} aim live...`);
   }
 
   _wireSwipe() {

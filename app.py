@@ -370,8 +370,9 @@ def run(
         )
         games_engine = GamesEngine(DATA_DIR, WEB_DIR / "data", effect_bus, server=game_server)
         game_server.start()
-        print(f"[games] 1v1 Phone link (Her):  {game_server.share_url}")
-        print("[games] Webcam mode (Him):      Play directly right here in the pewpew webcam window!")
+        print(f"[games] Her Phone (P1):         {game_server.share_url}")
+        print(f"[games] Your Phone (P2):        {game_server.host_phone_url}")
+        print("[games] Scan either QR or tap the role button to swap P1/P2 anytime.")
         if game_server.tunnel_error:
             print(f"[games] Tunnel note: {game_server.tunnel_error}")
 
@@ -422,10 +423,11 @@ def run(
     cv2.setMouseCallback("pewpew", on_window_mouse)
 
     print("Effects ON/OFF toggles: [1] Lightsaber, [2] Face Track, [3] Affection | "
-          "[c] blade color | [m] menu | [g] QR code | [v] hear | [a] switch mic | q quits.")
+          "[c] blade color | [m] menu | [q]/[g] QR code | [v] hear | [a] switch mic | Shift+Q quits.")
     t0 = time.monotonic()
     prev = t0
     frame_ms_ema = 16.0
+    auto_closed_qr = False
 
     try:
         while True:
@@ -576,12 +578,17 @@ def run(
             warning = audio.check_health()
             game_info = None
             if game_server is not None and games_engine is not None:
+                p_cnt = game_server.active_counts()["total"]
+                if p_cnt >= 2 and not auto_closed_qr:
+                    ui.qr_open = False
+                    auto_closed_qr = True
                 game_info = {
                     "room": game_server.room_code,
                     "url": game_server.share_url,
-                    "players": game_server.active_counts()["total"],
+                    "players": p_cnt,
                     "game": games_engine.active_game,
-                    "qr_bgr": game_server.qr_bgr(176) if ui.qr_open else None,
+                    "qr_bgr": game_server.qr_bgr(148, "guest") if ui.qr_open else None,
+                    "qr_host_bgr": game_server.qr_bgr(148, "host") if ui.qr_open else None,
                 }
             gb, gg, gr = BLADE_COLORS[color_key]["glow_bgr"]
             swatch_bgr = (int(gb * 255), int(gg * 255), int(gr * 255))
@@ -621,11 +628,15 @@ def run(
             key = cv2.waitKey(1) & 0xFF
             if key == 255:
                 continue
+            if key == ord("Q"):
+                break
             if games_engine is not None and games_engine.wants_keyboard():
                 if games_engine.handle_host_key(key):
                     continue
-            if key in (ord("q"), 27):
-                break
+            if key == 27:
+                ui.qr_open = False
+            elif key in (ord("q"), ord("g")):
+                ui.qr_open = not ui.qr_open
             elif key == ord("1"):
                 ui.toggle("saber")
             elif key == ord("2"):
@@ -636,8 +647,6 @@ def run(
                 color_idx = (color_idx + 1) % len(BLADE_COLOR_ORDER)
             elif key == ord("m"):
                 ui.menu_open = not ui.menu_open
-            elif key == ord("g"):
-                ui.qr_open = not ui.qr_open
             elif key == ord("v"):
                 audio.cycle_monitor()
             elif key == ord("a"):

@@ -50,7 +50,7 @@ class PreviewUI:
         "affection": False,
     })
     menu_open: bool = True
-    qr_open: bool = False
+    qr_open: bool = True
     _hitboxes: list[tuple[int, int, int, int, str]] = field(default_factory=list)
     _pending_actions: list[str] = field(default_factory=list)
 
@@ -244,7 +244,7 @@ class PreviewUI:
                 g_state = f"QR [{game_info.get('room', '----')}] ({game_info.get('players', 0)}p)"
                 cv2.putText(
                     preview,
-                    f"[g] Games: {g_state}",
+                    f"[q] Games: {g_state}",
                     (px0 + 14, gy0 + 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.43,
@@ -254,32 +254,44 @@ class PreviewUI:
                 )
                 self._hitboxes.append((px0 + 8, gy0, px1 - 8, gy1, "toggle_qr"))
 
-        # Optional QR Invite card on left side (preview only, never on virtual cam)
+        # Side-by-side 2-Phone QR Invite card (preview only, never on virtual cam)
         if game_info and self.qr_open and game_info.get("qr_bgr") is not None:
-            qr = game_info["qr_bgr"]
-            qh, qw = qr.shape[:2]
-            cx0, cy0 = 16, 68
-            cx1, cy1 = cx0 + max(qw + 24, 240), cy0 + qh + 74
-            _blend_panel(preview, cx0, cy0, cx1, cy1, (14, 22, 36), 0.90)
+            qr_g = game_info["qr_bgr"]
+            qr_h = game_info.get("qr_host_bgr")
+            qh, qw = qr_g.shape[:2]
+            pad_x = 18
+            gap_qr = 22 if qr_h is not None else 0
+            card_w = max(250, pad_x * 2 + qw + (qw + gap_qr if qr_h is not None else 0))
+            cx0, cy0 = 16, 62
+            cx1, cy1 = min(w - 290, cx0 + card_w), cy0 + qh + 96
+            _blend_panel(preview, cx0, cy0, cx1, cy1, (14, 22, 36), 0.92)
             cv2.rectangle(preview, (cx0, cy0), (cx1, cy1), (110, 230, 255), 1, cv2.LINE_AA)
             cv2.putText(
                 preview,
-                f"JOIN ROOM {game_info.get('room', '')} | {game_info.get('game', 'lobby')}",
-                (cx0 + 12, cy0 + 22),
+                f"ROOM {game_info.get('room', '')} | 2-PHONE 1V1 QR",
+                (cx0 + 14, cy0 + 24),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 (110, 235, 255),
                 1,
                 cv2.LINE_AA,
             )
-            qx = cx0 + (cx1 - cx0 - qw) // 2
-            qy = cy0 + 32
-            preview[qy:qy + qh, qx:qx + qw] = qr
-            url_short = _ascii(str(game_info.get("url", "")))[:36]
+            qy = cy0 + 48
+            qx_g = cx0 + pad_x
+            cv2.putText(preview, "HER PHONE (P1)", (qx_g, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (205, 165, 255), 1, cv2.LINE_AA)
+            if qy + qh < cy1 and qx_g + qw <= cx1:
+                preview[qy:qy + qh, qx_g:qx_g + qw] = qr_g
+            if qr_h is not None:
+                qh2, qw2 = qr_h.shape[:2]
+                qx_h = qx_g + qw + gap_qr
+                cv2.putText(preview, "YOUR PHONE (P2)", (qx_h, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (110, 240, 255), 1, cv2.LINE_AA)
+                if qy + qh2 < cy1 and qx_h + qw2 <= cx1:
+                    preview[qy:qy + qh2, qx_h:qx_h + qw2] = qr_h
+            url_short = _ascii(str(game_info.get("url", "")))[:46]
             cv2.putText(
                 preview,
-                url_short,
-                (cx0 + 10, cy1 - 14),
+                f"{url_short}   ([q] hide)",
+                (cx0 + 14, cy1 - 14),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.38,
                 (210, 225, 240),
@@ -303,7 +315,7 @@ class PreviewUI:
         typing_game = bool(game_info and game_info.get("game") in ("word_duel", "rare_answer"))
         hud_right = (
             f"saber {int(saber_ext * 100)}% ({blade_color}) | {frame_ms:.1f}ms | "
-            + ("TYPE + ENTER | ESC clear | click Hub to switch" if typing_game else "1-3 fx | c color | v hear | a mic | g QR | q quit")
+            + ("1v1 on Phones | q QR | Q quit" if typing_game else "1-3 fx | c color | v hear | a mic | q QR | Q quit")
         )
         cv2.putText(preview, hud_right, (226, bar_y0 + 43), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (220, 225, 235), 1, cv2.LINE_AA)
 

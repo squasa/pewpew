@@ -299,8 +299,8 @@ class GamesAR3DRenderer:
         self._composite_fbo(frame_bgr)
 
     def _render_pong(self, bp, now: float, webcam_aim: dict | None = None) -> None:
-        # Foreground bar table & 3D Red Solo Cups sitting across bottom-center of webcam!
-        base_m = _mat_translate(0.0, -0.36, -1.25) @ _mat_rot_x(0.28)
+        # Sleek side-docked 3D Bar Table & Red Solo Cups on bottom-left so user's face stays unobstructed
+        base_m = _mat_translate(-0.38, -0.32, -1.32) @ _mat_rot_x(0.28) @ _mat_scale(0.70, 0.70, 0.70)
         # Mahogany table surface slab
         self._draw_mesh("box", base_m @ _mat_translate(0.0, -0.04, 0.0) @ _mat_scale(0.95, 0.04, 0.65), (0.36, 0.21, 0.11), roughness=0.42)
         # Cups on host & guest side visible cleanly
@@ -333,8 +333,8 @@ class GamesAR3DRenderer:
             self._draw_mesh("sphere", bm, (0.98, 0.98, 0.95), roughness=0.18)
 
     def _render_pool(self, pm, now: float, webcam_aim: dict | None = None) -> None:
-        # True Top-Down GamePigeon PoolScene view anchored cleanly in webcam frame
-        base_m = _mat_translate(0.0, -0.16, -1.28) @ _mat_rot_x(math.pi * 0.49)
+        # Sleek Top-Down GamePigeon PoolScene table docked on bottom-left companion rail
+        base_m = _mat_translate(-0.38, -0.24, -1.32) @ _mat_rot_x(math.pi * 0.49) @ _mat_scale(0.68, 0.68, 0.68)
         self._draw_mesh("box", base_m @ _mat_translate(0.0, -0.03, 0.0) @ _mat_scale(1.12, 0.04, 0.62), (0.28, 0.15, 0.08), roughness=0.38)
         self._draw_mesh("box", base_m @ _mat_translate(0.0, -0.008, 0.0) @ _mat_scale(1.00, 0.015, 0.50), (0.05, 0.42, 0.24), roughness=0.74)
         # 6 Overhead Pocket Wells & Brass Collars
@@ -440,8 +440,8 @@ class GamesAR3DRenderer:
             self._draw_mesh("box", stick_m, (0.82, 0.62, 0.36), roughness=0.28, emissive=(pr * 0.12, pg * 0.12, pb * 0.12))
 
     def _render_classic_darts(self, cd, now: float, webcam_aim: dict | None = None) -> None:
-        # Floating 3D bristle dartboard in upper-right webcam space + stuck darts
-        bm = _mat_translate(0.38, 0.16, -1.20) @ _mat_rot_y(-0.22) @ _mat_rot_x(math.pi * 0.5)
+        # Floating 3D bristle dartboard docked on right side rail + stuck darts & live aim torus
+        bm = _mat_translate(0.44, -0.14, -1.28) @ _mat_rot_y(-0.22) @ _mat_rot_x(math.pi * 0.5) @ _mat_scale(0.82, 0.82, 0.82)
         self._draw_mesh("disc", bm @ _mat_scale(0.21, 0.16, 0.21), (0.22, 0.14, 0.09), roughness=0.45)
         self._draw_mesh("disc", bm @ _mat_translate(0.0, 0.014, 0.0) @ _mat_scale(0.18, 0.12, 0.18), (0.10, 0.11, 0.12), roughness=0.68)
         self._draw_mesh("torus", bm @ _mat_translate(0.0, 0.022, 0.0) @ _mat_scale(0.18, 0.03, 0.18), (0.85, 0.22, 0.22), roughness=0.25)

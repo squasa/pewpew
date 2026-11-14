@@ -152,7 +152,10 @@ export class PoolView {
     if (sig !== this._lastSig || !this._canvas) {
       this._lastSig = sig;
       this._renderDOM(p);
-    } else if (!this._isMyTurn(p) && this._liveAim) {
+    }
+    if (!this._isMyTurn(p) && this._liveAim && this._liveAim.by !== this.myRole()) {
+      if (Number.isFinite(this._liveAim.angle)) this._angle = Number(this._liveAim.angle);
+      if (Number.isFinite(this._liveAim.power)) this._pullBack = Number(this._liveAim.power);
       this._updateRivalStrikeBar();
     }
     this._syncMeshes(p);
@@ -531,9 +534,10 @@ export class PoolView {
     if (!fill || !labelEl || !this._liveAim) return;
     const pwr = Math.max(0, Math.min(1, Number(this._liveAim.power || 0)));
     const pct = Math.round(pwr * 100);
+    const opp = this.myRole() === "host" ? "HER" : "HIM";
     fill.style.width = `${pct}%`;
-    fill.style.background = pwr <= 0.5 ? "linear-gradient(90deg,#22c55e,#eab308)" : "linear-gradient(90deg,#eab308,#ef4444)";
-    labelEl.textContent = pwr > 0.02 ? `HIM AIMING · POWER ${pct}%` : "HIM AIMING ON WEBCAM...";
+    fill.style.background = pwr <= 0.5 ? "linear-gradient(90deg,#22c55e,#eab308)" : "linear-gradient(90deg,#22c55e,#eab308 55%,#ef4444)";
+    labelEl.textContent = pwr > 0.02 ? `${opp} AIMING · POWER ${pct}%` : `${opp} AIMING ON PHONE...`;
   }
 
   _renderDOM(p) {
@@ -577,19 +581,19 @@ export class PoolView {
       p.phase === "finished"
         ? (p.winner === "guest" ? "HER WINS!" : p.winner === "host" ? "HIM WINS!" : "GAME OVER")
         : mine
-        ? (p.turn === "guest" ? "HER TURN (YOU)" : "HIM'S TURN (YOU)")
-        : (p.turn === "host" ? "HIM'S TURN (WEBCAM)" : "HER TURN (PHONE)");
+        ? `YOUR TURN (${p.turn === "guest" ? "P1 HER" : "P2 HIM"})`
+        : (p.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
 
     this._container.querySelector("#pool-turn").textContent = turnLabel;
     this._container.querySelector("#pool-gg").textContent = p.groups.guest || "open";
     this._container.querySelector("#pool-hg").textContent = p.groups.host || "open";
     this._container.querySelector("#pool-status").textContent =
-      p.status || (p.phase === "ball_in_hand" ? "Tap table to place cue ball!" : mine ? "Tap felt to aim · Drag green/gold cue bar to shoot!" : "Waiting for opponent's shot...");
+      p.status || (p.phase === "ball_in_hand" ? "Tap table to place cue ball!" : mine ? "Tap felt to aim · Drag green/gold cue bar to shoot!" : "Watching opponent's aim live...");
 
     const bar = this._container.querySelector("#pool-strike-bar");
     const labelEl = this._container.querySelector("#pool-strike-label");
     if (bar && labelEl && this._draggingMode !== "pull") {
-      bar.style.opacity = mine && p.phase === "aiming" ? "1" : "0.52";
+      bar.style.opacity = mine && p.phase === "aiming" ? "1" : "0.62";
       labelEl.textContent =
         p.phase === "shooting"
           ? "BALLS ROLLING..."
@@ -597,7 +601,7 @@ export class PoolView {
           ? "TAP FELT ABOVE TO PLACE CUE BALL"
           : mine
           ? "DRAG HERE TO PULL CUE & SHOOT · 0%"
-          : `${p.turn === "host" ? "HIM'S TURN (WEBCAM)" : "HER TURN (PHONE)"} · WAIT`;
+          : `${p.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)"} · WATCHING`;
     }
   }
 

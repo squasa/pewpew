@@ -130,7 +130,7 @@ class GamesEngine:
                 reply = {"type": "pong", "t": msg.get("t")}
             elif mtype == "action":
                 act_name = str(msg.get("act", ""))
-                reply = self._dispatch_action(role, str(msg.get("game", self.active_game)), msg, roles)
+                reply = self._dispatch_action(role, str(msg.get("game", self.active_game)), msg, roles | {"guest", "host"})
                 if act_name == "aim":
                     now_m = time.monotonic()
                     if (now_m - self._last_aim_broadcast) >= 0.035:
@@ -306,7 +306,7 @@ class GamesEngine:
                     self.beer_pong.swat_bounce()
                 moving = self.beer_pong.step(dt)
             elif self.active_game == "rare_answer":
-                moving = self.krillion.step(dt, roles)
+                moving = self.krillion.step(dt, roles | {"guest", "host"})
 
             self.bus.update_flying(flying_sprites)
             self._flush_events_locked(w, h)
@@ -656,51 +656,15 @@ class GamesEngine:
         return ok
 
     def process_webcam_hands(self, hands_lm: list[Any], now: float) -> None:
-        """Let the webcam user (host) aim and shoot Pool, Cup Pong, or Darts via hand pinch gestures."""
-        fired = False
+        """Disable accidental pinch-drag firing when both players hold phones on camera (swat/shield use open_palms)."""
         with self._lock:
-            if not hands_lm or self.active_game not in ("beer_pong", "classic_darts", "pool"):
-                self._hand_pinch_active = False
-                self._hand_pinch_start = None
-                self._hand_last_xy = None
-                if not self._mouse_drag_active and self.webcam_aim is None:
-                    self.webcam_aim = None
-                elif not self._mouse_drag_active and self.webcam_aim and self.webcam_aim.get("hover"):
-                    pass
-                else:
-                    self.webcam_aim = None
-                return
-            lm = hands_lm[0]
-            thumb, index = lm[4], lm[8]
-            pinch_dist = ((thumb[0] - index[0]) ** 2 + (thumb[1] - index[1]) ** 2) ** 0.5
-            is_pinch = pinch_dist < 0.058
-            cx, cy = (thumb[0] + index[0]) * 0.5, (thumb[1] + index[1]) * 0.5
-
-            if is_pinch:
-                if not self._hand_pinch_active:
-                    self._hand_pinch_active = True
-                    self._hand_pinch_start = (cx, cy, now)
-                self._hand_last_xy = (cx, cy, now)
-                sx, sy, st = self._hand_pinch_start
-                self.webcam_aim = self._compute_drag_shot_locked(sx, sy, cx, cy, max(0.04, now - st))
-                return
-
-            if not self._hand_pinch_active or self._hand_pinch_start is None:
-                if not self._mouse_drag_active and not (self.webcam_aim and self.webcam_aim.get("hover")):
-                    self.webcam_aim = None
-                return
-            sx, sy, st = self._hand_pinch_start
-            ex, ey, _ = self._hand_last_xy or (cx, cy, now)
             self._hand_pinch_active = False
             self._hand_pinch_start = None
             self._hand_last_xy = None
-            self.webcam_aim = None
-            fired = self._fire_drag_shot_locked(sx, sy, ex, ey, max(0.04, now - st), now)
-        if fired:
-            self.broadcast_state(force=True)
+        return
 
     def handle_host_mouse(self, action: str, nx: float, ny: float, now: float) -> bool:
-        """Mouse-first host controls in pewpew window: live hover aim + click-drag Green/Yellow/Red power pullback."""
+        """Optional Mac click-drag host controls; never overwrites live mobile aim on hover."""
         fired = False
         aim_dirty = False
         with self._lock:
@@ -713,20 +677,14 @@ class GamesEngine:
             if action == "down":
                 # Pool Ball-In-Hand placement directly on projected overhead AR table
                 if g == "pool" and self.pool.phase == "ball_in_hand" and self.pool.turn == "host":
-                    if 0.24 <= nx <= 0.76 and 0.48 <= ny <= 0.94:
-                        px = max(-0.92, min(0.92, (nx - 0.5) / 0.232))
-                        py = max(-0.44, min(0.44, (0.71 - ny) / 0.205 * 0.5))
+                    if 0.04 <= nx <= 0.56 and 0.38 <= ny <= 0.96:
+                        px = max(-0.92, min(0.92, (nx - 0.30) / 0.22))
+                        py = max(-0.44, min(0.44, (0.68 - ny) / 0.19 * 0.5))
                         if self.pool.place_cue("host", px, py).get("ok"):
                             self._dirty = True
                             self._flush_events_locked(1280, 720)
                             fired = True
                 else:
-                    if g == "pool" and self.pool.phase == "aiming" and self.pool.turn == "host":
-                        cue = self.pool.balls[0]
-                        tx = (nx - 0.5) / 0.232
-                        ty = (0.71 - ny) / 0.205 * 0.5
-                        if math.hypot(tx - cue.x, ty - cue.y) > 0.02:
-                            self._hover_pool_angle = math.atan2(ty - cue.y, tx - cue.x)
                     self._mouse_drag_active = True
                     self._mouse_drag_start = (nx, ny, now)
                     self._mouse_last_xy = (nx, ny, now)
@@ -736,55 +694,6 @@ class GamesEngine:
                     sx, sy, st = self._mouse_drag_start
                     self.webcam_aim = self._compute_drag_shot_locked(sx, sy, nx, ny, max(0.04, now - st))
                     aim_dirty = (now - self._last_aim_broadcast) >= 0.04
-                else:
-                    # Live hover aiming on host turn so cue/target tracks cursor smoothly before click
-                    if g == "pool" and self.pool.phase == "aiming" and self.pool.turn == "host":
-                        cue = self.pool.balls[0]
-                        tx = (nx - 0.5) / 0.232
-                        ty = (0.71 - ny) / 0.205 * 0.5
-                        angle = math.atan2(ty - cue.y, tx - cue.x)
-                        self._hover_pool_angle = angle
-                        self.webcam_aim = {
-                            "kind": "pool",
-                            "game": "pool",
-                            "by": "host",
-                            "hover": True,
-                            "angle": angle,
-                            "power": 0.0,
-                            "aimX": nx,
-                            "aimY": ny,
-                            "ts": now,
-                        }
-                        aim_dirty = (now - self._last_aim_broadcast) >= 0.06
-                    elif g == "beer_pong" and self.beer_pong.turn == "host" and self.beer_pong.phase != "finished" and not self.beer_pong.balls:
-                        ax = max(-0.55, min(0.55, (nx - 0.5) * 1.55))
-                        self.webcam_aim = {
-                            "kind": "beer_pong",
-                            "game": "beer_pong",
-                            "by": "host",
-                            "hover": True,
-                            "aimX": ax,
-                            "power": 0.58,
-                            "loft": 0.55,
-                            "ts": now,
-                        }
-                        aim_dirty = (now - self._last_aim_broadcast) >= 0.06
-                    elif g == "classic_darts" and self.classic_darts.turn == "host" and self.classic_darts.phase == "playing":
-                        dx = max(-0.98, min(0.98, (nx - 0.5) * 2.2))
-                        dy = max(-0.98, min(0.98, (ny - 0.45) * 2.2))
-                        self.webcam_aim = {
-                            "kind": "classic_darts",
-                            "game": "classic_darts",
-                            "by": "host",
-                            "hover": True,
-                            "nx": dx,
-                            "ny": dy,
-                            "x": dx,
-                            "y": dy,
-                            "power": 0.0,
-                            "ts": now,
-                        }
-                        aim_dirty = (now - self._last_aim_broadcast) >= 0.06
             elif action == "up" and self._mouse_drag_active and self._mouse_drag_start is not None:
                 sx, sy, st = self._mouse_drag_start
                 self._mouse_drag_active = False

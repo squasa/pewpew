@@ -648,10 +648,57 @@ class EffectBus:
     def draw_game_hud(self, frame: np.ndarray, state: dict, now: float, face_state=None) -> None:
         """Render aesthetic side-by-side 1v1 broadcast visuals onto `frame` before vcam."""
         g = state.get("activeGame", "lobby")
-        if g == "lobby":
-            return
         h, w = frame.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
+        her_code = self._hud_ascii(str(state.get("herCode") or ""))
+        your_code = self._hud_ascii(str(state.get("yourCode") or ""))
+        cloud_st = str(state.get("cloudStatus") or "")
+        roles_here = {str(p.get("role", "")) for p in state.get("players", [])}
+
+        if g == "lobby":
+            if not her_code and not your_code:
+                return
+            ly0, ly1 = 56, 128
+            # Keep all 3 pills cleanly left of Effects drawer (w - 284 on preview) on 1280px frames
+            right_limit = min(w - 18, max(760, w - 302))
+            avail_w = right_limit - 18
+            gap = 12
+            side_w = min(286, max(195, int(avail_w * 0.285)))
+            ctr_w = avail_w - side_w * 2 - gap * 2
+
+            # Left Pill: HER CODE (P1)
+            lx0, lx1 = 18, 18 + side_w
+            self._blend_box(frame, lx0, ly0, lx1, ly1, col=(16, 18, 34), alpha=0.86, border=(195, 145, 255))
+            cv2.putText(frame, "HER CODE (P1)", (lx0 + 12, ly0 + 21), font, 0.44, (205, 155, 255), 1, cv2.LINE_AA)
+            h_stat = "JOINED" if "guest" in roles_here else "OPEN"
+            h_col = (80, 230, 110) if "guest" in roles_here else (195, 145, 255)
+            cv2.putText(frame, h_stat, (lx1 - 74, ly0 + 21), font, 0.39, h_col, 1, cv2.LINE_AA)
+            cv2.putText(frame, her_code or "----", (lx0 + 14, ly0 + 58), font, 1.02, (255, 255, 255), 2, cv2.LINE_AA)
+
+            # Center Pill: GitHub URL + Cloud Relay Status
+            cx0 = lx1 + gap
+            cx1 = cx0 + ctr_w
+            relay_ok = (cloud_st == "connected")
+            c_border = (110, 235, 255) if relay_ok else (85, 195, 240)
+            self._blend_box(frame, cx0, ly0, cx1, ly1, col=(12, 18, 30), alpha=0.86, border=c_border)
+            url_lbl = "squasa.github.io/pewpew"
+            (uw, _), _ = cv2.getTextSize(url_lbl, font, 0.56, 2)
+            cv2.putText(frame, url_lbl, (cx0 + max(10, (ctr_w - uw) // 2), ly0 + 28), font, 0.56, (110, 240, 255), 2, cv2.LINE_AA)
+            sub_lbl = "1V1 CLOUD READY - ENTER CODE ON PHONE" if relay_ok else f"1V1 RELAY: {(cloud_st or 'READY').upper()}"
+            (sw, _), _ = cv2.getTextSize(sub_lbl, font, 0.37, 1)
+            sub_col = (115, 245, 160) if relay_ok else (220, 230, 245)
+            cv2.putText(frame, sub_lbl, (cx0 + max(8, (ctr_w - sw) // 2), ly0 + 55), font, 0.37, sub_col, 1, cv2.LINE_AA)
+
+            # Right Pill: YOUR CODE (P2)
+            rx0 = cx1 + gap
+            rx1 = rx0 + side_w
+            self._blend_box(frame, rx0, ly0, rx1, ly1, col=(12, 22, 34), alpha=0.86, border=(110, 240, 255))
+            cv2.putText(frame, "YOUR CODE (P2)", (rx0 + 12, ly0 + 21), font, 0.44, (110, 240, 255), 1, cv2.LINE_AA)
+            y_stat = "JOINED" if "host" in roles_here else "OPEN"
+            y_col = (80, 230, 110) if "host" in roles_here else (110, 240, 255)
+            cv2.putText(frame, y_stat, (rx1 - 74, ly0 + 21), font, 0.39, y_col, 1, cv2.LINE_AA)
+            cv2.putText(frame, your_code or "----", (rx0 + 14, ly0 + 58), font, 1.02, (255, 255, 255), 2, cv2.LINE_AA)
+            return
 
         title_map = {
             "pool": "1V1 8-BALL POOL",
@@ -766,10 +813,11 @@ class EffectBus:
         # Left Pill (HER P1)
         lx0, lx1 = 18, 18 + pill_w
         self._blend_box(frame, lx0, py0, lx1, py1, col=(16, 18, 34), alpha=0.84, border=(195, 145, 255))
-        cv2.putText(frame, "HER (P1)", (lx0 + 12, py0 + 22), font, 0.48, (205, 155, 255), 2, cv2.LINE_AA)
+        her_hdr = f"HER (P1) #{her_code}" if her_code else "HER (P1)"
+        cv2.putText(frame, her_hdr, (lx0 + 12, py0 + 22), font, 0.45, (205, 155, 255), 2, cv2.LINE_AA)
         cv2.putText(frame, self._hud_ascii(her_stat)[:26], (lx0 + 12, py0 + 46), font, 0.42, (232, 238, 248), 1, cv2.LINE_AA)
         hb_txt, hb_col, _ = her_badge
-        cv2.putText(frame, hb_txt, (lx1 - 108, py0 + 22), font, 0.40, hb_col, 1, cv2.LINE_AA)
+        cv2.putText(frame, hb_txt, (lx1 - 102, py0 + 22), font, 0.39, hb_col, 1, cv2.LINE_AA)
 
         # Center Game Banner (compact so center face below stays wide open)
         cw = min(356, w - pill_w * 2 - 72)
@@ -788,10 +836,19 @@ class EffectBus:
         rx1 = w - 18
         rx0 = rx1 - pill_w
         self._blend_box(frame, rx0, py0, rx1, py1, col=(12, 22, 34), alpha=0.84, border=(110, 240, 255))
-        cv2.putText(frame, "YOU (P2)", (rx0 + 12, py0 + 22), font, 0.48, (110, 240, 255), 2, cv2.LINE_AA)
+        you_hdr = f"YOU (P2) #{your_code}" if your_code else "YOU (P2)"
+        cv2.putText(frame, you_hdr, (rx0 + 12, py0 + 22), font, 0.45, (110, 240, 255), 2, cv2.LINE_AA)
         cv2.putText(frame, self._hud_ascii(you_stat)[:26], (rx0 + 12, py0 + 46), font, 0.42, (232, 238, 248), 1, cv2.LINE_AA)
         yb_txt, yb_col, _ = you_badge
-        cv2.putText(frame, yb_txt, (rx1 - 108, py0 + 22), font, 0.40, yb_col, 1, cv2.LINE_AA)
+        cv2.putText(frame, yb_txt, (rx1 - 102, py0 + 22), font, 0.39, yb_col, 1, cv2.LINE_AA)
+
+        if (her_code or your_code) and len(roles_here) < 2:
+            fy0, fy1 = h - 84, h - 58
+            f_txt = f"squasa.github.io/pewpew | HER {her_code} | YOU {your_code}"
+            (fw, _), _ = cv2.getTextSize(f_txt, font, 0.39, 1)
+            fx1 = min(w - 18, 18 + fw + 24)
+            self._blend_box(frame, 18, fy0, fx1, fy1, col=(12, 18, 30), alpha=0.78, border=(90, 155, 200))
+            cv2.putText(frame, f_txt, (30, fy0 + 18), font, 0.39, (215, 236, 252), 1, cv2.LINE_AA)
 
         # 2. Live Green -> Yellow -> Red Power & Aim Meter on left rail (Pool / Cup Pong / Darts)
         aim = state.get("liveAim") or state.get("webcamAim")

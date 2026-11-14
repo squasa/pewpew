@@ -169,46 +169,87 @@ function syncUI(state) {
   }
 }
 
-function renderConnectPrompt(reason) {
+function renderConnectPrompt(reason, errMsg = "") {
+  if (mountedView?.unmount) mountedView.unmount();
+  mountedView = null;
+  mountedGame = null;
+  const errHtml = errMsg
+    ? `<div style="padding:10px 12px;border-radius:10px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);color:#fecaca;font-size:13px;font-weight:700;text-align:center;">${errMsg}</div>`
+    : "";
   stageEl.innerHTML = `
-    <div class="hub-wrap" style="max-width:460px;margin:24px auto;">
+    <div class="hub-wrap" style="max-width:420px;margin:28px auto;">
       <div class="hub-hero">
-        <h1>PEWPEW 1V1 CONNECT</h1>
-        <p>${reason === "MISSING ROOM" ? "Enter your Room Code from the Mac pewpew window." : "Connect this GitHub Pages phone controller to your Mac tunnel (wss://... or host:port)."}</p>
+        <h1>PEWPEW 1V1</h1>
+        <p>Enter your 4-character code shown on the webcam (<b>HER CODE</b> or <b>YOUR CODE</b>).</p>
       </div>
-      <div class="game-panel" style="gap:10px;">
-        <label style="font-size:12px;color:var(--text-dim);">Server / Tunnel Host (?ws=)</label>
-        <input id="gh-ws-inp" placeholder="e.g. abc-xyz.trycloudflare.com or 192.168.x.x:8770" value="${ws.wsOrigin || ""}" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:#0f172a;color:#fff;" />
-        <label style="font-size:12px;color:var(--text-dim);">4-Letter Room Code (?room=)</label>
-        <input id="gh-room-inp" placeholder="e.g. ABCD" value="${ws.room || ""}" maxlength="8" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:#0f172a;color:#fff;text-transform:uppercase;" />
-        <button class="btn-primary" id="gh-connect-btn" style="width:100%;">Connect to 1v1 Room</button>
+      <div class="game-panel" style="gap:12px;">
+        ${errHtml}
+        <label style="font-size:12px;color:var(--text-dim);letter-spacing:0.06em;">PLAYER CODE</label>
+        <input id="gh-code-inp" placeholder="e.g. K7M1" value="${ws.room || ""}" maxlength="6" autocomplete="off" autocapitalize="characters" style="width:100%;padding:14px 12px;border-radius:12px;border:1px solid rgba(103,232,249,0.45);background:#0f172a;color:#fff;text-transform:uppercase;text-align:center;font-size:26px;font-weight:900;letter-spacing:0.24em;" />
+        <button class="btn-primary" id="gh-connect-btn" style="width:100%;padding:14px;font-size:16px;">Join 1v1 Room</button>
       </div>
     </div>
   `;
-  stageEl.querySelector("#gh-connect-btn")?.addEventListener("click", () => {
-    const srv = stageEl.querySelector("#gh-ws-inp")?.value || "";
-    const rm = stageEl.querySelector("#gh-room-inp")?.value || "";
-    ws.setTarget(srv, rm);
+  const inp = stageEl.querySelector("#gh-code-inp");
+  const submit = () => {
+    const code = (inp?.value || "").trim().toUpperCase();
+    if (code.length < 3) return;
+    latestState = null;
+    ws.setCode(code);
+    renderConnecting(code);
+  };
+  stageEl.querySelector("#gh-connect-btn")?.addEventListener("click", submit);
+  inp?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  inp?.focus();
+}
+
+function renderConnecting(code) {
+  if (mountedView || latestState) return;
+  stageEl.innerHTML = `
+    <div class="hub-wrap" style="max-width:420px;margin:32px auto;text-align:center;">
+      <div class="hub-hero">
+        <h1>JOINING ${code}…</h1>
+        <p>Connecting to Mac webcam 1v1 room via cloud relay.</p>
+      </div>
+      <div class="game-panel" style="gap:10px;align-items:center;">
+        <button class="btn-cyan" id="gh-change-code" style="width:100%;">Change Code</button>
+      </div>
+    </div>
+  `;
+  stageEl.querySelector("#gh-change-code")?.addEventListener("click", () => {
+    renderConnectPrompt("MISSING CODE");
   });
 }
 
 const ws = new WsClient(
   (state) => syncUI(state),
-  (online, label) => {
+  (online, label, meta = {}) => {
     dotEl.className = `dot ${online ? "online" : "offline"}`;
-    roomEl.textContent = `ROOM ${label || "----"}`;
+    roomEl.textContent = `CODE ${label || "----"} ✎`;
     roleBtn.textContent = ws.role === "host" ? "P2: Him (You) ⇄" : (ws.role === "spectator" ? "Viewer ⇄" : "P1: Her (You) ⇄");
     if (online && latestState && mountedView?.update) {
       mountedView.update(latestState);
     }
-    if (!online && !latestState && (label === "NEED ?ws=SERVER" || label === "MISSING ROOM")) {
-      renderConnectPrompt(label);
+    const errCode = meta?.code;
+    if (!online && (errCode === "missing_code" || errCode === "bad_room" || errCode === "expired")) {
+      if (errCode === "bad_room" || errCode === "expired") latestState = null;
+      renderConnectPrompt(label, errCode === "missing_code" ? "" : (meta?.message || label));
+    } else if (!online && !latestState && errCode === "connecting") {
+      renderConnecting(label);
     }
   },
   (ack) => {
     if (mountedView?.onAck) mountedView.onAck(ack);
   }
 );
+
+roomEl.style.cursor = "pointer";
+roomEl.title = "Tap to change 4-character player code";
+roomEl.addEventListener("click", () => {
+  renderConnectPrompt("MISSING CODE");
+});
 
 initViews(ws);
 ws.connect();

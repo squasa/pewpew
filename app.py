@@ -370,9 +370,11 @@ def run(
         )
         games_engine = GamesEngine(DATA_DIR, WEB_DIR / "data", effect_bus, server=game_server)
         game_server.start()
-        print(f"[games] Her Phone (P1):         {game_server.share_url}")
-        print(f"[games] Your Phone (P2):        {game_server.host_phone_url}")
-        print("[games] Scan either QR or tap the role button to swap P1/P2 anytime.")
+        print(f"[games] Play URL (GitHub):     {game_server.github_url}")
+        print(f"[games] HER CODE (P1):         {game_server.her_code}")
+        print(f"[games] YOUR CODE (P2):        {game_server.host_code}")
+        print(f"[games] Local LAN fallback:    {game_server.lan_url}")
+        print("[games] Both codes are shown on the webcam. Press 'q' anytime to toggle QR.")
         if game_server.tunnel_error:
             print(f"[games] Tunnel note: {game_server.tunnel_error}")
 
@@ -584,6 +586,9 @@ def run(
                     auto_closed_qr = True
                 game_info = {
                     "room": game_server.room_code,
+                    "her_code": game_server.her_code,
+                    "host_code": game_server.host_code,
+                    "github_url": game_server.github_url,
                     "url": game_server.share_url,
                     "players": p_cnt,
                     "game": games_engine.active_game,
@@ -954,7 +959,7 @@ def selftest() -> int:
             (tmp_data / fname).write_bytes((DATA_DIR / fname).read_bytes())
 
         bus = EffectBus()
-        srv = GameServer(web_dir=WEB_DIR, data_dir=tmp_data, host="127.0.0.1", port=0, room_code="T3ST")
+        srv = GameServer(web_dir=WEB_DIR, data_dir=tmp_data, host="127.0.0.1", port=0, room_code="T3ST", enable_cloud=False)
         geng = GamesEngine(tmp_data, WEB_DIR / "data", bus, server=srv)
 
         assert len(geng.krillion.prompts) >= 50, f"expected >=50 Krillion prompts, got {len(geng.krillion.prompts)}"

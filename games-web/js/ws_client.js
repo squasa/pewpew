@@ -204,6 +204,106 @@ export class SoundFX {
   }
 }
 
+const CLOUD_BROKERS = [
+  "wss://broker.emqx.io:8084/mqtt",
+  "wss://broker.hivemq.com:8884/mqtt",
+];
+const _ENC = new TextEncoder();
+const _DEC = new TextDecoder();
+
+function _mqttVarInt(n) {
+  const out = [];
+  do {
+    let b = n % 128;
+    n = Math.floor(n / 128);
+    if (n > 0) b |= 0x80;
+    out.push(b);
+  } while (n > 0);
+  return new Uint8Array(out);
+}
+
+function _mqttStr(s) {
+  const raw = _ENC.encode(s);
+  const out = new Uint8Array(2 + raw.length);
+  out[0] = (raw.length >> 8) & 0xff;
+  out[1] = raw.length & 0xff;
+  out.set(raw, 2);
+  return out;
+}
+
+function _mqttConcat(...parts) {
+  let len = 0;
+  for (const p of parts) len += p.length;
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+function _mqttEncodeConnect(clientId, keepalive = 20) {
+  const varHdr = _mqttConcat(
+    _mqttStr("MQTT"),
+    new Uint8Array([0x04, 0x02, (keepalive >> 8) & 0xff, keepalive & 0xff]),
+    _mqttStr(clientId)
+  );
+  return _mqttConcat(new Uint8Array([0x10]), _mqttVarInt(varHdr.length), varHdr);
+}
+
+function _mqttEncodeSubscribe(pktId, topic) {
+  const body = _mqttConcat(
+    new Uint8Array([(pktId >> 8) & 0xff, pktId & 0xff]),
+    _mqttStr(topic),
+    new Uint8Array([0x00])
+  );
+  return _mqttConcat(new Uint8Array([0x82]), _mqttVarInt(body.length), body);
+}
+
+function _mqttEncodePublish(topic, text) {
+  const body = _mqttConcat(_mqttStr(topic), _ENC.encode(text));
+  return _mqttConcat(new Uint8Array([0x30]), _mqttVarInt(body.length), body);
+}
+
+function _mqttParseFrames(buf) {
+  const packets = [];
+  let off = 0;
+  while (buf.length - off >= 2) {
+    const hdr = buf[off];
+    let idx = off + 1;
+    let rem = 0;
+    let mul = 1;
+    let complete = false;
+    while (idx < buf.length) {
+      const b = buf[idx++];
+      rem += (b & 0x7f) * mul;
+      if (!(b & 0x80)) {
+        complete = true;
+        break;
+      }
+      mul *= 128;
+    }
+    if (!complete || buf.length - idx < rem) break;
+    packets.push({ hdr, body: buf.subarray(idx, idx + rem) });
+    off = idx + rem;
+  }
+  return { packets, rest: off ? buf.subarray(off) : buf };
+}
+
+function _mqttDecodePublish(hdr, body) {
+  if (body.length < 2) return null;
+  const tlen = (body[0] << 8) | body[1];
+  let pos = 2 + tlen;
+  if (body.length < pos) return null;
+  const qos = (hdr >> 1) & 0x03;
+  if (qos > 0) {
+    pos += 2;
+    if (body.length < pos) return null;
+  }
+  return _DEC.decode(body.subarray(pos));
+}
+
 export class WsClient {
   constructor(onState, onStatus, onAck) {
     this.onState = onState;
@@ -212,30 +312,86 @@ export class WsClient {
     this.ws = null;
     this.role = "guest";
     this.name = localStorage.getItem("pewpew_name") || "";
+    this.clientId = this._resolveClientId();
     this.room = this._resolveRoom();
     this.wsOrigin = this._resolveWsOrigin();
     this.connected = false;
+    this.mode = "direct"; // "direct" | "cloud"
+    this._mqttReady = false;
+    this._brokerIdx = 0;
     this._reconnectTimer = null;
+    this._pingTimer = null;
+    this._handshakeTimer = null;
+    this._haltedError = false;
+    this._rxBuf = new Uint8Array(0);
+    window.addEventListener("pagehide", () => {
+      if (this.mode === "cloud" && this._mqttReady && this.ws?.readyState === WebSocket.OPEN) {
+        this.send({ type: "leave" });
+      }
+    });
+  }
+
+  _resolveClientId() {
+    let cid = "";
+    try {
+      cid = sessionStorage.getItem("pewpew_cid") || "";
+      if (!cid) {
+        cid = "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+        sessionStorage.setItem("pewpew_cid", cid);
+      }
+    } catch (_) {
+      cid = "c" + Math.random().toString(36).slice(2, 12);
+    }
+    return cid.slice(0, 20);
+  }
+
+  _roleFromCode(code, explicitRole = "") {
+    if (explicitRole === "host" || explicitRole === "guest") return explicitRole;
+    if (code.length === 4) {
+      if (code.endsWith("1")) return "guest";
+      if (code.endsWith("2")) return "host";
+    }
+    return this.role || "guest";
   }
 
   _resolveRoom() {
     const qs = new URLSearchParams(window.location.search);
-    const r = (qs.get("room") || localStorage.getItem("pewpew_room") || "").trim().toUpperCase();
-    if (r) localStorage.setItem("pewpew_room", r);
-    const qsRole = (qs.get("role") || "").trim().toLowerCase();
-    if (qsRole === "host" || qsRole === "guest") {
-      this.role = qsRole;
+    const r = (
+      qs.get("code") ||
+      qs.get("room") ||
+      localStorage.getItem("pewpew_code") ||
+      localStorage.getItem("pewpew_room") ||
+      ""
+    ).trim().toUpperCase();
+    if (r) {
+      localStorage.setItem("pewpew_code", r);
+      localStorage.setItem("pewpew_room", r);
     }
+    const qsRole = (qs.get("role") || "").trim().toLowerCase();
+    this.role = this._roleFromCode(r, qsRole);
     return r;
   }
 
   _resolveWsOrigin() {
     const qs = new URLSearchParams(window.location.search);
-    const raw = (qs.get("ws") || qs.get("server") || localStorage.getItem("pewpew_ws") || "").trim();
-    if (qs.get("ws") || qs.get("server")) {
-      localStorage.setItem("pewpew_ws", raw);
+    const explicit = (qs.get("ws") || qs.get("server") || "").trim();
+    if (explicit) return explicit;
+    if (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:") {
+      return "";
     }
-    return raw;
+    return (localStorage.getItem("pewpew_ws") || "").trim();
+  }
+
+  _shouldUseCloud() {
+    if (this.wsOrigin) return false;
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("cloud") === "1") return true;
+    const h = window.location.hostname;
+    return h.endsWith("github.io") || (!h && window.location.protocol === "file:");
+  }
+
+  setCode(code) {
+    this.setTarget("", code);
   }
 
   setTarget(serverHostOrUrl, roomCode) {
@@ -247,14 +403,43 @@ export class WsClient {
     }
     if (rm) {
       this.room = rm;
+      this.role = this._roleFromCode(rm);
+      localStorage.setItem("pewpew_code", rm);
       localStorage.setItem("pewpew_room", rm);
     }
+    this._haltedError = false;
+    this._clearTimers();
+    this._closeSocket();
+    this.connect();
+  }
+
+  _clearTimers() {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
-    try { this.ws?.close(); } catch (_) {}
-    this.connect();
+    if (this._pingTimer) {
+      clearInterval(this._pingTimer);
+      this._pingTimer = null;
+    }
+    if (this._handshakeTimer) {
+      clearTimeout(this._handshakeTimer);
+      this._handshakeTimer = null;
+    }
+  }
+
+  _closeSocket() {
+    const prev = this.ws;
+    this.ws = null;
+    this.connected = false;
+    this._mqttReady = false;
+    if (prev) {
+      prev.onopen = null;
+      prev.onmessage = null;
+      prev.onclose = null;
+      prev.onerror = null;
+      try { prev.close(); } catch (_) {}
+    }
   }
 
   _buildWsUrl(params) {
@@ -269,31 +454,30 @@ export class WsClient {
       }
       const cleanHost = raw.replace(/\/+$/, "");
       const isLocal = /^(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)/.test(cleanHost);
-      const scheme = window.location.protocol === "https:" && !isLocal ? "wss:" : (window.location.protocol === "https:" ? "wss:" : "ws:");
+      const scheme = (window.location.protocol === "https:" && !isLocal) ? "wss:" : "ws:";
       return `${scheme}//${cleanHost}/ws?${params.toString()}`;
-    }
-    if (window.location.hostname.endsWith("github.io")) {
-      return null;
     }
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}/ws?${params.toString()}`;
   }
 
   connect() {
-    if (!this.room) {
-      this.onStatus(false, "MISSING ROOM");
+    if (!this.room || this.room.length < 3) {
+      this.onStatus(false, "MISSING CODE", { code: "missing_code" });
       return;
     }
+    if (this._shouldUseCloud()) {
+      this._connectCloud();
+      return;
+    }
+    this.mode = "direct";
+    this._mqttReady = false;
     const params = new URLSearchParams({
       room: this.room,
       role: this.role,
     });
     if (this.name) params.set("name", this.name);
     const url = this._buildWsUrl(params);
-    if (!url) {
-      this.onStatus(false, "NEED ?ws=SERVER");
-      return;
-    }
     try {
       this.ws = new WebSocket(url);
     } catch (_) {
@@ -313,40 +497,156 @@ export class WsClient {
       } catch (_) {
         return;
       }
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type === "welcome") {
-        this.role = msg.role || this.role;
-        this.name = msg.name || this.name;
-        this.room = msg.room || this.room;
-        this.onStatus(true, this.room, msg);
-      } else if (msg.type === "state") {
-        this.onState(msg);
-      } else if (msg.type === "error") {
-        this.onStatus(false, msg.message || "ERROR");
-      } else {
-        this.onAck(msg);
-      }
+      this._handleIncoming(msg);
     };
 
     this.ws.onclose = () => {
       this.connected = false;
       this.onStatus(false, this.room || "DISCONNECTED");
-      this._scheduleReconnect();
+      if (!this._haltedError) this._scheduleReconnect();
     };
   }
 
-  _scheduleReconnect() {
-    if (this._reconnectTimer) return;
+  _connectCloud() {
+    this.mode = "cloud";
+    this._mqttReady = false;
+    this._rxBuf = new Uint8Array(0);
+    const prefix = this.room.slice(0, 3);
+    const broker = CLOUD_BROKERS[this._brokerIdx % CLOUD_BROKERS.length];
+    let sock;
+    try {
+      sock = new WebSocket(broker, "mqtt");
+      sock.binaryType = "arraybuffer";
+    } catch (_) {
+      this._brokerIdx = (this._brokerIdx + 1) % CLOUD_BROKERS.length;
+      this._scheduleReconnect(800);
+      return;
+    }
+    this.ws = sock;
+    this.onStatus(false, this.room, { code: "connecting", broker });
+
+    this._handshakeTimer = setTimeout(() => {
+      if (this.ws === sock && !this._mqttReady) {
+        this._brokerIdx = (this._brokerIdx + 1) % CLOUD_BROKERS.length;
+        this._closeSocket();
+        this._scheduleReconnect(250);
+      }
+    }, 4500);
+
+    sock.onopen = () => {
+      if (this.ws !== sock) return;
+      const cid = `pp-cli-${this.clientId}-${Math.random().toString(36).slice(2, 6)}`;
+      sock.send(_mqttEncodeConnect(cid, 25));
+    };
+
+    sock.onmessage = (ev) => {
+      if (this.ws !== sock) return;
+      const chunk = new Uint8Array(ev.data);
+      this._rxBuf = _mqttConcat(this._rxBuf, chunk);
+      let parsed;
+      try {
+        parsed = _mqttParseFrames(this._rxBuf);
+      } catch (_) {
+        this._rxBuf = new Uint8Array(0);
+        return;
+      }
+      this._rxBuf = parsed.rest;
+      for (const pkt of parsed.packets) {
+        const ptype = pkt.hdr & 0xf0;
+        if (ptype === 0x20) {
+          if (pkt.body.length < 2 || pkt.body[1] !== 0) {
+            this._brokerIdx = (this._brokerIdx + 1) % CLOUD_BROKERS.length;
+            this._closeSocket();
+            this._scheduleReconnect(400);
+            return;
+          }
+          sock.send(_mqttEncodeSubscribe(1, `pewpew/v1/${prefix}/client/${this.clientId}`));
+        } else if (ptype === 0x90) {
+          if (this._handshakeTimer) {
+            clearTimeout(this._handshakeTimer);
+            this._handshakeTimer = null;
+          }
+          this.connected = true;
+          this._mqttReady = true;
+          this.onStatus(true, this.room);
+          this.send({ type: "join", code: this.room, role: this.role, name: this.name });
+          if (this._pingTimer) clearInterval(this._pingTimer);
+          this._pingTimer = setInterval(() => {
+            if (this.ws === sock && sock.readyState === WebSocket.OPEN && this._mqttReady) {
+              sock.send(new Uint8Array([0xc0, 0x00]));
+              this.send({ type: "ping", t: Date.now() });
+            }
+          }, 12000);
+        } else if (ptype === 0x30) {
+          const text = _mqttDecodePublish(pkt.hdr, pkt.body);
+          if (!text) continue;
+          try {
+            const msg = JSON.parse(text);
+            this._handleIncoming(msg);
+          } catch (_) {}
+        }
+      }
+    };
+
+    sock.onclose = () => {
+      if (this.ws !== sock) return;
+      this._clearTimers();
+      this.connected = false;
+      this._mqttReady = false;
+      if (!this._haltedError) {
+        this.onStatus(false, this.room || "DISCONNECTED");
+        this._scheduleReconnect(1200);
+      }
+    };
+  }
+
+  _handleIncoming(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "welcome") {
+      this.role = msg.role || this.role;
+      this.name = msg.name || this.name;
+      if (msg.herCode && msg.role === "guest") this.room = msg.herCode;
+      else if (msg.hostCode && msg.role === "host") this.room = msg.hostCode;
+      else if (msg.room) this.room = msg.room;
+      this.onStatus(true, this.room, msg);
+    } else if (msg.type === "state") {
+      this.onState(msg);
+    } else if (msg.type === "error") {
+      if (msg.code === "bad_room" || msg.code === "expired") {
+        this._haltedError = true;
+        this._clearTimers();
+        this._closeSocket();
+      }
+      this.onStatus(false, msg.message || "ERROR", msg);
+    } else {
+      this.onAck(msg);
+    }
+  }
+
+  _scheduleReconnect(delayMs = 1500) {
+    if (this._reconnectTimer || this._haltedError) return;
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
       this.connect();
-    }, 1500);
+    }, delayMs);
   }
 
   send(obj) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(obj));
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.mode === "cloud") {
+      if (!this._mqttReady || !this.room || this.room.length < 3) return;
+      const prefix = this.room.slice(0, 3);
+      const env = JSON.stringify({
+        cid: this.clientId,
+        role: this.role,
+        code: this.room,
+        name: this.name,
+        msg: obj,
+      });
+      this.ws.send(_mqttEncodePublish(`pewpew/v1/${prefix}/in`, env));
+      return;
     }
+    this.ws.send(JSON.stringify(obj));
   }
 
   selectGame(game) {

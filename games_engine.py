@@ -741,6 +741,9 @@ class GamesEngine:
             payload = {
                 "type": "state",
                 "activeGame": self.active_game,
+                "herCode": self.server.her_code if self.server is not None else "",
+                "yourCode": self.server.host_code if self.server is not None else "",
+                "cloudStatus": self.server.cloud_status if self.server is not None else "disabled",
                 "players": [
                     {"role": p["role"], "name": p["name"]}
                     for p in self.players.values()

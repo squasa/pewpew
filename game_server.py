@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import threading
@@ -400,12 +401,118 @@ async def ws_read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes] | Non
             return first_op if first_op is not None else 0x1, b"".join(chunks)
 
 
+GITHUB_PAGES_URL = "https://squasa.github.io/pewpew/"
+CLOUD_BROKERS: tuple[tuple[str, int, str], ...] = (
+    ("broker.emqx.io", 8084, "/mqtt"),
+    ("broker.hivemq.com", 8884, "/mqtt"),
+)
+
+
+def ws_encode_client_frame(payload: bytes, opcode: int = 0x2) -> bytes:
+    """Encode a masked client-to-server RFC6455 frame."""
+    header = bytearray([0x80 | (opcode & 0x0F)])
+    n = len(payload)
+    if n < 126:
+        header.append(0x80 | n)
+    elif n < 65536:
+        header.append(0x80 | 126)
+        header.extend(struct.pack("!H", n))
+    else:
+        header.append(0x80 | 127)
+        header.extend(struct.pack("!Q", n))
+    mask = os.urandom(4)
+    header.extend(mask)
+    if payload:
+        masked = bytes(b ^ mask[i & 3] for i, b in enumerate(payload))
+        return bytes(header) + masked
+    return bytes(header)
+
+
+def _mqtt_varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n % 128
+        n //= 128
+        if n > 0:
+            b |= 0x80
+        out.append(b)
+        if n == 0:
+            break
+    return bytes(out)
+
+
+def _mqtt_str(s: str) -> bytes:
+    raw = s.encode("utf-8")
+    return struct.pack("!H", len(raw)) + raw
+
+
+def _mqtt_connect(client_id: str, keepalive: int = 25) -> bytes:
+    var_hdr = _mqtt_str("MQTT") + b"\x04\x02" + struct.pack("!H", keepalive)
+    body = var_hdr + _mqtt_str(client_id)
+    return b"\x10" + _mqtt_varint(len(body)) + body
+
+
+def _mqtt_subscribe(pkt_id: int, topic: str) -> bytes:
+    body = struct.pack("!H", pkt_id) + _mqtt_str(topic) + b"\x00"
+    return b"\x82" + _mqtt_varint(len(body)) + body
+
+
+def _mqtt_publish(topic: str, payload: bytes) -> bytes:
+    body = _mqtt_str(topic) + payload
+    return b"\x30" + _mqtt_varint(len(body)) + body
+
+
+def _mqtt_parse_packets(buf: bytearray) -> list[tuple[int, bytes]]:
+    pkts: list[tuple[int, bytes]] = []
+    while len(buf) >= 2:
+        hdr = buf[0]
+        idx = 1
+        rem = 0
+        mul = 1
+        complete = True
+        while True:
+            if idx >= len(buf):
+                complete = False
+                break
+            b = buf[idx]
+            idx += 1
+            rem += (b & 0x7F) * mul
+            if not (b & 0x80):
+                break
+            mul *= 128
+            if mul > 128 * 128 * 128:
+                raise ValueError("Malformed MQTT remaining length")
+        if not complete or len(buf) < idx + rem:
+            break
+        body = bytes(buf[idx:idx + rem])
+        del buf[:idx + rem]
+        pkts.append((hdr, body))
+    return pkts
+
+
+def _mqtt_decode_publish(body: bytes, hdr: int) -> tuple[str, bytes] | None:
+    if len(body) < 2:
+        return None
+    tlen = struct.unpack("!H", body[:2])[0]
+    pos = 2 + tlen
+    if len(body) < pos:
+        return None
+    topic = body[2:pos].decode("utf-8", errors="replace")
+    qos = (hdr >> 1) & 0x03
+    if qos > 0:
+        pos += 2
+        if len(body) < pos:
+            return None
+    return topic, body[pos:]
+
+
 @dataclass
 class ConnectedClient:
     client_id: str
     role: str  # "guest" | "host" | "spectator"
     name: str
-    writer: asyncio.StreamWriter
+    writer: asyncio.StreamWriter | None = None
+    is_cloud: bool = False
     queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
     last_seen: float = field(default_factory=time.monotonic)
 
@@ -422,6 +529,7 @@ class GameServer:
         room_code: str | None = None,
         public_url: str | None = None,
         enable_tunnel: bool = False,
+        enable_cloud: bool = True,
         room_ttl_s: float = 7200.0,
     ) -> None:
         self.web_dir = web_dir.resolve()
@@ -429,11 +537,18 @@ class GameServer:
         self.host = host
         self.port = port
         self.room_code = (room_code or "".join(secrets.choice(ROOM_ALPHABET) for _ in range(4))).upper()
+        self.room_prefix = (self.room_code[:3] if len(self.room_code) >= 3 else self.room_code.ljust(3, "X")).upper()
+        self.her_code = f"{self.room_prefix}1"
+        self.host_code = f"{self.room_prefix}2"
         self._explicit_public_url = public_url.rstrip("/") if public_url else None
         self._tunnel_url: str | None = None
         self._tunnel_proc: subprocess.Popen | None = None
         self._enable_tunnel = enable_tunnel
         self.tunnel_error: str | None = None
+        self._enable_cloud = bool(enable_cloud)
+        self.cloud_status: str = "connecting" if enable_cloud else "disabled"
+        self.cloud_broker: str | None = None
+        self.cloud_error: str | None = None
         self.room_ttl_s = room_ttl_s
         self.created_at = time.monotonic()
 
@@ -448,6 +563,12 @@ class GameServer:
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._server: asyncio.AbstractServer | None = None
+        self._stopping = False
+        self._cloud_task: asyncio.Task[Any] | None = None
+        self._cloud_gc_task: asyncio.Task[Any] | None = None
+        self._cloud_wake: asyncio.Event | None = None
+        self._cloud_ctrl_msgs: list[tuple[str, bytes]] = []
+        self._cloud_pending_state: dict[str, tuple[str, bytes]] = {}
         self._qr_cache: dict[tuple[str, str, int], np.ndarray] = {}
 
     def set_handlers(
@@ -463,6 +584,10 @@ class GameServer:
         self._on_prompts_changed = on_prompts_changed
 
     @property
+    def github_url(self) -> str:
+        return GITHUB_PAGES_URL
+
+    @property
     def lan_url(self) -> str:
         ip = detect_lan_ip()
         return f"http://{ip}:{self.port}/?room={self.room_code}"
@@ -472,14 +597,48 @@ class GameServer:
         if self._tunnel_url:
             return f"{self._tunnel_url}/?room={self.room_code}"
         if self._explicit_public_url:
-            return f"{self._explicit_public_url}/?room={self.room_code}"
+            return f"{self._explicit_public_url}/?code={self.her_code}"
+        if self._enable_cloud:
+            return f"{GITHUB_PAGES_URL}?code={self.her_code}"
         return self.lan_url
 
     @property
     def host_phone_url(self) -> str:
-        base = self.share_url
-        sep = "&" if "?" in base else "?"
-        return f"{base}{sep}role=host"
+        if self._tunnel_url:
+            return f"{self._tunnel_url}/?room={self.room_code}&role=host"
+        if self._explicit_public_url:
+            return f"{self._explicit_public_url}/?code={self.host_code}"
+        if self._enable_cloud:
+            return f"{GITHUB_PAGES_URL}?code={self.host_code}"
+        return f"{self.lan_url}&role=host"
+
+    def resolve_code(self, raw_code: str, fallback_role: str = "guest") -> tuple[bool, str]:
+        c = (raw_code or "").strip().upper()
+        if c == self.her_code:
+            return True, "guest"
+        if c == self.host_code:
+            return True, "host"
+        if c == self.room_code:
+            return True, (fallback_role if fallback_role in ("guest", "host") else "guest")
+        return False, "guest"
+
+    @property
+    def cloud_in_topic(self) -> str:
+        return f"pewpew/v1/{self.room_prefix}/in"
+
+    def cloud_client_topic(self, client_id: str) -> str:
+        return f"pewpew/v1/{self.room_prefix}/client/{client_id}"
+
+    def _welcome_payload(self, client_id: str, role: str, name: str) -> dict[str, Any]:
+        return {
+            "type": "welcome",
+            "clientId": client_id,
+            "role": role,
+            "name": name,
+            "room": self.room_code,
+            "herCode": self.her_code,
+            "hostCode": self.host_code,
+        }
 
     def qr_bgr(self, box_px: int = 164, role: str = "guest") -> np.ndarray:
         url = self.host_phone_url if role == "host" else self.share_url
@@ -524,6 +683,10 @@ class GameServer:
         if socks:
             self.port = int(socks[0].getsockname()[1])
         self._ready.set()
+        if self._enable_cloud:
+            self._cloud_wake = asyncio.Event()
+            self._cloud_task = asyncio.create_task(self._cloud_loop())
+            self._cloud_gc_task = asyncio.create_task(self._cloud_gc_loop())
         try:
             async with self._server:
                 await self._server.serve_forever()
@@ -561,6 +724,7 @@ class GameServer:
                 break
 
     def stop(self) -> None:
+        self._stopping = True
         if self._tunnel_proc is not None:
             try:
                 self._tunnel_proc.terminate()
@@ -570,6 +734,10 @@ class GameServer:
             self._tunnel_proc = None
         if self._loop is not None and self._server is not None:
             def _shutdown() -> None:
+                if self._cloud_task and not self._cloud_task.done():
+                    self._cloud_task.cancel()
+                if self._cloud_gc_task and not self._cloud_gc_task.done():
+                    self._cloud_gc_task.cancel()
                 if self._server:
                     self._server.close()
                 for task in asyncio.all_tasks(self._loop):
@@ -596,11 +764,22 @@ class GameServer:
         loop = self._loop
         if loop is None or loop.is_closed():
             return
+        is_state = payload.get("type") == "state"
+        msg_bytes = msg.encode("utf-8")
         with self._clients_lock:
             clients = list(self._clients.values())
         for c in clients:
             try:
-                loop.call_soon_threadsafe(self._enqueue_nowait, c, msg)
+                if c.is_cloud:
+                    loop.call_soon_threadsafe(
+                        self._cloud_enqueue_nowait,
+                        c.client_id,
+                        self.cloud_client_topic(c.client_id),
+                        msg_bytes,
+                        is_state,
+                    )
+                else:
+                    loop.call_soon_threadsafe(self._enqueue_nowait, c, msg)
             except RuntimeError:
                 pass
 
@@ -611,10 +790,220 @@ class GameServer:
             return
         with self._clients_lock:
             c = self._clients.get(client_id)
-        if c is not None:
-            try:
+        if c is None:
+            return
+        try:
+            if c.is_cloud:
+                is_state = payload.get("type") == "state"
+                loop.call_soon_threadsafe(
+                    self._cloud_enqueue_nowait,
+                    client_id,
+                    self.cloud_client_topic(client_id),
+                    msg.encode("utf-8"),
+                    is_state,
+                )
+            else:
                 loop.call_soon_threadsafe(self._enqueue_nowait, c, msg)
-            except RuntimeError:
+        except RuntimeError:
+            pass
+
+    def _cloud_enqueue_nowait(self, client_id: str | None, topic: str, data: bytes, is_state: bool) -> None:
+        if is_state and client_id:
+            self._cloud_pending_state[client_id] = (topic, data)
+        else:
+            if len(self._cloud_ctrl_msgs) >= 128:
+                self._cloud_ctrl_msgs.pop(0)
+            self._cloud_ctrl_msgs.append((topic, data))
+        if self._cloud_wake is not None:
+            self._cloud_wake.set()
+
+    async def _cloud_gc_loop(self) -> None:
+        try:
+            while not self._stopping:
+                await asyncio.sleep(5.0)
+                now = time.monotonic()
+                expired: list[tuple[str, str]] = []
+                with self._clients_lock:
+                    for cid, c in list(self._clients.items()):
+                        if c.is_cloud and (now - c.last_seen) > 35.0:
+                            expired.append((cid, c.role))
+                            self._clients.pop(cid, None)
+                if expired and self._on_disconnect:
+                    for cid, role in expired:
+                        self._on_disconnect(cid, role)
+        except asyncio.CancelledError:
+            pass
+
+    async def _cloud_loop(self) -> None:
+        ssl_ctx = ssl.create_default_context()
+        broker_idx = 0
+        try:
+            while not self._stopping:
+                host, port, ws_path = CLOUD_BROKERS[broker_idx % len(CLOUD_BROKERS)]
+                self.cloud_status = "connecting"
+                try:
+                    await self._run_cloud_session(host, port, ws_path, ssl_ctx)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self.cloud_status = "reconnecting"
+                    self.cloud_error = f"{host}: {exc}"
+                    broker_idx = (broker_idx + 1) % len(CLOUD_BROKERS)
+                if not self._stopping:
+                    await asyncio.sleep(1.2)
+        except asyncio.CancelledError:
+            pass
+
+    async def _run_cloud_session(self, host: str, port: int, ws_path: str, ssl_ctx: ssl.SSLContext) -> None:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=ssl_ctx),
+            timeout=8.0,
+        )
+        try:
+            ws_key = base64.b64encode(os.urandom(16)).decode("ascii")
+            req = (
+                f"GET {ws_path} HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {ws_key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                "Sec-WebSocket-Protocol: mqtt\r\n\r\n"
+            ).encode("ascii")
+            writer.write(req)
+            await writer.drain()
+
+            hdr_bytes = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=6.0)
+            status_line = hdr_bytes.split(b"\r\n", 1)[0]
+            if b"101" not in status_line:
+                raise RuntimeError(status_line.decode("latin-1", errors="replace"))
+
+            mqtt_id = f"pp-srv-{self.room_prefix}-{secrets.token_hex(4)}"
+            writer.write(ws_encode_client_frame(_mqtt_connect(mqtt_id, keepalive=25), 0x2))
+            await writer.drain()
+
+            rx_buf = bytearray()
+            got_connack = False
+            got_suback = False
+            deadline = time.monotonic() + 7.0
+
+            async def _drain_until(want_suback: bool) -> bool:
+                nonlocal got_connack, got_suback
+                while time.monotonic() < deadline:
+                    rem = max(0.2, deadline - time.monotonic())
+                    frame = await asyncio.wait_for(ws_read_frame(reader), timeout=rem)
+                    if frame is None:
+                        raise ConnectionError("EOF waiting for MQTT handshake")
+                    op, fdata = frame
+                    if op == 0x8:
+                        raise ConnectionError("WS closed during handshake")
+                    if op == 0x9:
+                        writer.write(ws_encode_client_frame(fdata, 0xA))
+                        await writer.drain()
+                        continue
+                    if op == 0x2 and fdata:
+                        rx_buf.extend(fdata)
+                        for phdr, pbody in _mqtt_parse_packets(rx_buf):
+                            ptype = phdr & 0xF0
+                            if ptype == 0x20:
+                                if len(pbody) < 2 or pbody[1] != 0:
+                                    raise RuntimeError("MQTT CONNACK rejected")
+                                got_connack = True
+                                if not want_suback:
+                                    return True
+                            elif ptype == 0x90:
+                                got_suback = True
+                                if want_suback:
+                                    return True
+                            elif ptype == 0x30:
+                                pub = _mqtt_decode_publish(pbody, phdr)
+                                if pub is not None:
+                                    self._handle_cloud_message(pub[1])
+                return False
+
+            if not await _drain_until(False) or not got_connack:
+                raise TimeoutError("MQTT CONNACK timeout")
+
+            writer.write(ws_encode_client_frame(_mqtt_subscribe(1, self.cloud_in_topic), 0x2))
+            await writer.drain()
+            if not await _drain_until(True) or not got_suback:
+                raise TimeoutError("MQTT SUBACK timeout")
+
+            self.cloud_status = "connected"
+            self.cloud_broker = host
+            self.cloud_error = None
+            print(f"[games] Cloud relay ready ({host}) -> squasa.github.io/pewpew | HER: {self.her_code} | YOU: {self.host_code}")
+            if self._cloud_wake is not None:
+                self._cloud_wake.set()
+
+            write_lock = asyncio.Lock()
+
+            async def send_ws_pkt(pkt: bytes) -> None:
+                async with write_lock:
+                    writer.write(ws_encode_client_frame(pkt, 0x2))
+                    await writer.drain()
+
+            async def tx_loop() -> None:
+                wake = self._cloud_wake or asyncio.Event()
+                while not self._stopping:
+                    sent_any = False
+                    while self._cloud_ctrl_msgs:
+                        topic, payload = self._cloud_ctrl_msgs.pop(0)
+                        await send_ws_pkt(_mqtt_publish(topic, payload))
+                        sent_any = True
+                    if self._cloud_pending_state:
+                        pending = list(self._cloud_pending_state.values())
+                        self._cloud_pending_state.clear()
+                        for topic, payload in pending:
+                            await send_ws_pkt(_mqtt_publish(topic, payload))
+                        sent_any = True
+                    if sent_any:
+                        continue
+                    wake.clear()
+                    if self._cloud_ctrl_msgs or self._cloud_pending_state:
+                        continue
+                    try:
+                        await asyncio.wait_for(wake.wait(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        await send_ws_pkt(b"\xc0\x00")  # MQTT PINGREQ
+
+            async def rx_loop() -> None:
+                while not self._stopping:
+                    frame = await ws_read_frame(reader)
+                    if frame is None:
+                        return
+                    op, fdata = frame
+                    if op == 0x8:
+                        return
+                    if op == 0x9:
+                        async with write_lock:
+                            writer.write(ws_encode_client_frame(fdata, 0xA))
+                            await writer.drain()
+                        continue
+                    if op == 0x2 and fdata:
+                        rx_buf.extend(fdata)
+                        for phdr, pbody in _mqtt_parse_packets(rx_buf):
+                            ptype = phdr & 0xF0
+                            if ptype == 0x30:
+                                pub = _mqtt_decode_publish(pbody, phdr)
+                                if pub is not None:
+                                    self._handle_cloud_message(pub[1])
+
+            tx_task = asyncio.create_task(tx_loop())
+            rx_task = asyncio.create_task(rx_loop())
+            done, pending_tasks = await asyncio.wait({tx_task, rx_task}, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending_tasks:
+                t.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+            for t in done:
+                exc = t.exception()
+                if exc is not None:
+                    raise exc
+        finally:
+            try:
+                writer.close()
+            except Exception:
                 pass
 
     @staticmethod
@@ -689,9 +1078,14 @@ class GameServer:
             counts = self.active_counts()
             info = {
                 "room": self.room_code,
+                "herCode": self.her_code,
+                "hostCode": self.host_code,
+                "githubUrl": self.github_url,
                 "shareUrl": self.share_url,
                 "lanUrl": self.lan_url,
                 "hostUrl": self.host_phone_url,
+                "cloudStatus": self.cloud_status,
+                "cloudBroker": self.cloud_broker,
                 "clients": counts,
                 "tunnelError": self.tunnel_error,
                 "expired": (time.monotonic() - self.created_at) > self.room_ttl_s,
@@ -789,6 +1183,166 @@ class GameServer:
         ).encode("latin-1")
         writer.write(hdr + body)
 
+    def _prune_stale_cloud_locked(self, now: float) -> list[tuple[str, str]]:
+        expired: list[tuple[str, str]] = []
+        for cid, c in list(self._clients.items()):
+            if c.is_cloud and (now - c.last_seen) > 25.0:
+                expired.append((cid, c.role))
+                self._clients.pop(cid, None)
+        return expired
+
+    def _assign_role_locked(self, req_role: str) -> str:
+        existing_roles = {c.role for c in self._clients.values()}
+        if req_role == "guest" and "guest" in existing_roles:
+            return "host" if "host" not in existing_roles else "spectator"
+        if req_role == "host" and "host" in existing_roles:
+            return "guest" if "guest" not in existing_roles else "spectator"
+        return req_role if req_role in ("guest", "host") else "guest"
+
+    def _apply_set_profile(self, client_id: str, msg: dict[str, Any]) -> None:
+        new_name = str(msg.get("name", "")).strip()[:24]
+        req_switch = str(msg.get("role", "")).strip().lower()
+        welcomes: list[tuple[str, dict[str, Any]]] = []
+        connects: list[tuple[str, str, str]] = []
+        with self._clients_lock:
+            client = self._clients.get(client_id)
+            if client is None:
+                return
+            if new_name:
+                client.name = new_name
+            if req_switch in ("guest", "host") and req_switch != client.role:
+                old_role = client.role
+                other_client = next(
+                    (c for cid, c in self._clients.items() if cid != client_id and c.role == req_switch),
+                    None,
+                )
+                client.role = req_switch
+                welcomes.append((client_id, self._welcome_payload(client_id, client.role, client.name)))
+                if other_client is not None:
+                    other_client.role = old_role
+                    welcomes.append((
+                        other_client.client_id,
+                        self._welcome_payload(other_client.client_id, other_client.role, other_client.name),
+                    ))
+                    connects.append((other_client.client_id, other_client.role, other_client.name))
+            connects.append((client_id, client.role, client.name))
+        for cid, wp in welcomes:
+            self.send_to(cid, wp)
+        if self._on_connect:
+            for cid, crole, cname in connects:
+                self._on_connect(cid, crole, cname)
+
+    def _send_cloud_error(self, client_id: str, code: str, message: str) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        payload = json.dumps({"type": "error", "code": code, "message": message}, separators=(",", ":")).encode("utf-8")
+        self._cloud_enqueue_nowait(None, self.cloud_client_topic(client_id), payload, False)
+
+    def _handle_cloud_message(self, data: bytes) -> None:
+        try:
+            env = json.loads(data.decode("utf-8"))
+        except Exception:
+            return
+        if not isinstance(env, dict):
+            return
+        cid = re.sub(r"[^A-Za-z0-9_-]", "", str(env.get("cid", ""))).strip()[:24]
+        inner = env.get("msg")
+        if not cid or not isinstance(inner, dict):
+            return
+
+        if (time.monotonic() - self.created_at) > self.room_ttl_s:
+            self._send_cloud_error(cid, "expired", "Session expired.")
+            return
+
+        mtype = str(inner.get("type", ""))
+        req_code = str(env.get("code") or inner.get("code") or "").strip().upper()
+        req_role = str(inner.get("role") or env.get("role") or "guest").strip().lower()
+        req_name = str(inner.get("name") or env.get("name") or "").strip()[:24]
+
+        now = time.monotonic()
+        expired: list[tuple[str, str]] = []
+        client_role = "guest"
+        client_name = req_name
+        joined_now = False
+
+        with self._clients_lock:
+            expired = self._prune_stale_cloud_locked(now)
+            existing = self._clients.get(cid)
+            if existing is None:
+                if mtype == "leave":
+                    existing = None
+                else:
+                    ok, resolved_role = self.resolve_code(req_code, req_role if req_role in ("guest", "host") else "guest")
+                    if not ok:
+                        existing = None
+                    else:
+                        role = self._assign_role_locked(resolved_role)
+                        display_name = req_name or ("Her" if role == "guest" else ("Him" if role == "host" else "Viewer"))
+                        existing = ConnectedClient(
+                            client_id=cid,
+                            role=role,
+                            name=display_name,
+                            writer=None,
+                            is_cloud=True,
+                            last_seen=now,
+                        )
+                        self._clients[cid] = existing
+                        client_role = role
+                        client_name = display_name
+                        joined_now = True
+            else:
+                existing.last_seen = now
+                if req_name:
+                    existing.name = req_name
+                if mtype == "leave":
+                    client_role = existing.role
+                    self._clients.pop(cid, None)
+                    existing = False  # sentinel for removed
+                else:
+                    client_role = existing.role
+                    client_name = existing.name
+
+        if expired and self._on_disconnect:
+            for ecid, erole in expired:
+                self._on_disconnect(ecid, erole)
+
+        if existing is False:
+            if self._on_disconnect:
+                self._on_disconnect(cid, client_role)
+            return
+
+        if existing is None:
+            if mtype != "leave":
+                self._send_cloud_error(cid, "bad_room", f"Invalid or expired player code ({req_code or 'none'}).")
+            return
+
+        if joined_now:
+            self.send_to(cid, self._welcome_payload(cid, client_role, client_name))
+            if self._on_connect:
+                self._on_connect(cid, client_role, client_name)
+            if mtype in ("join", "ping", "sync"):
+                return
+        elif mtype in ("join", "sync"):
+            # If user re-submitted a different role-specific code in same tab, honor it
+            if mtype == "join" and req_code:
+                ok, resolved_role = self.resolve_code(req_code, client_role)
+                if ok and resolved_role != client_role and resolved_role in ("guest", "host"):
+                    self._apply_set_profile(cid, {"role": resolved_role, "name": req_name})
+                    return
+            self.send_to(cid, self._welcome_payload(cid, client_role, client_name))
+            if self._on_connect:
+                self._on_connect(cid, client_role, client_name)
+            return
+        elif mtype == "ping":
+            return
+
+        if mtype == "set_profile":
+            self._apply_set_profile(cid, inner)
+            return
+        if self._on_message:
+            self._on_message(cid, client_role, inner)
+
     async def _handle_ws(
         self,
         reader: asyncio.StreamReader,
@@ -810,8 +1364,10 @@ class GameServer:
         writer.write(resp)
         await writer.drain()
 
-        req_room = (qs.get("room", [""])[0] or "").strip().upper()
-        if req_room != self.room_code:
+        req_room = (qs.get("room", [""])[0] or qs.get("code", [""])[0] or "").strip().upper()
+        req_role = (qs.get("role", ["guest"])[0] or "guest").strip().lower()
+        ok_room, resolved_role = self.resolve_code(req_room, req_role)
+        if not ok_room:
             err = json.dumps({"type": "error", "code": "bad_room", "message": f"Invalid or expired room code ({req_room or 'none'})."})
             writer.write(ws_encode_frame(err.encode("utf-8"), 0x1))
             writer.write(ws_encode_frame(b"", 0x8))
@@ -827,32 +1383,22 @@ class GameServer:
             writer.close()
             return
 
-        req_role = (qs.get("role", ["guest"])[0] or "guest").strip().lower()
-        if req_role not in ("guest", "host"):
-            req_role = "guest"
         req_name = (qs.get("name", [""])[0] or "").strip()[:24]
 
+        expired: list[tuple[str, str]] = []
         with self._clients_lock:
-            existing_roles = {c.role for c in self._clients.values()}
-            if req_role == "guest" and "guest" in existing_roles:
-                role = "host" if "host" not in existing_roles else "spectator"
-            elif req_role == "host" and "host" in existing_roles:
-                role = "guest" if "guest" not in existing_roles else "spectator"
-            else:
-                role = req_role
-
+            expired = self._prune_stale_cloud_locked(time.monotonic())
+            role = self._assign_role_locked(resolved_role)
             client_id = secrets.token_hex(6)
             display_name = req_name or ("Her" if role == "guest" else ("Him" if role == "host" else "Viewer"))
             client = ConnectedClient(client_id=client_id, role=role, name=display_name, writer=writer)
             self._clients[client_id] = client
 
-        welcome = json.dumps({
-            "type": "welcome",
-            "clientId": client_id,
-            "role": role,
-            "name": display_name,
-            "room": self.room_code,
-        })
+        if expired and self._on_disconnect:
+            for ecid, erole in expired:
+                self._on_disconnect(ecid, erole)
+
+        welcome = json.dumps(self._welcome_payload(client_id, role, display_name))
         await client.queue.put(welcome)
         if self._on_connect:
             self._on_connect(client_id, role, display_name)
@@ -884,40 +1430,7 @@ class GameServer:
                     if not isinstance(msg, dict):
                         continue
                     if msg.get("type") == "set_profile":
-                        new_name = str(msg.get("name", "")).strip()[:24]
-                        req_switch = str(msg.get("role", "")).strip().lower()
-                        swapped_peer: tuple[str, str, str] | None = None
-                        with self._clients_lock:
-                            if new_name:
-                                client.name = new_name
-                            if req_switch in ("guest", "host") and req_switch != client.role:
-                                old_role = client.role
-                                other_client = next(
-                                    (c for cid, c in self._clients.items() if cid != client_id and c.role == req_switch),
-                                    None,
-                                )
-                                client.role = req_switch
-                                self._enqueue_nowait(client, json.dumps({
-                                    "type": "welcome",
-                                    "clientId": client_id,
-                                    "role": client.role,
-                                    "name": client.name,
-                                    "room": self.room_code,
-                                }))
-                                if other_client is not None:
-                                    other_client.role = old_role
-                                    self._enqueue_nowait(other_client, json.dumps({
-                                        "type": "welcome",
-                                        "clientId": other_client.client_id,
-                                        "role": other_client.role,
-                                        "name": other_client.name,
-                                        "room": self.room_code,
-                                    }))
-                                    swapped_peer = (other_client.client_id, other_client.role, other_client.name)
-                        if self._on_connect:
-                            if swapped_peer is not None:
-                                self._on_connect(*swapped_peer)
-                            self._on_connect(client_id, client.role, client.name)
+                        self._apply_set_profile(client_id, msg)
                         continue
                     if self._on_message:
                         self._on_message(client_id, client.role, msg)

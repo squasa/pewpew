@@ -50,7 +50,7 @@ class PreviewUI:
         "affection": False,
     })
     menu_open: bool = True
-    qr_open: bool = True
+    qr_open: bool = False
     _hitboxes: list[tuple[int, int, int, int, str]] = field(default_factory=list)
     _pending_actions: list[str] = field(default_factory=list)
 
@@ -131,6 +131,16 @@ class PreviewUI:
                 cv2.rectangle(preview, (tx, ty0), (tx + 66, ty1), (130, 165, 210), 1, cv2.LINE_AA)
                 cv2.putText(preview, "Reset", (tx + 12, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (235, 242, 252), 1, cv2.LINE_AA)
                 self._hitboxes.append((tx, ty0, tx + 66, ty1, "game_reset"))
+                tx += 72
+            her_c = _ascii(str(game_info.get("her_code", "")))
+            you_c = _ascii(str(game_info.get("host_code", "")))
+            if her_c and you_c and tx + 190 < px0 - 8:
+                code_lbl = f"HER {her_c} | YOU {you_c} ({game_info.get('players', 0)}/2)"
+                (cw2, _), _ = cv2.getTextSize(code_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.41, 1)
+                cw2 = min(px0 - 8 - tx, cw2 + 18)
+                _blend_panel(preview, tx, ty0, tx + cw2, ty1, (20, 34, 48), 0.90)
+                cv2.rectangle(preview, (tx, ty0), (tx + cw2, ty1), (105, 225, 255), 1, cv2.LINE_AA)
+                cv2.putText(preview, code_lbl, (tx + 9, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (230, 248, 255), 1, cv2.LINE_AA)
 
         # 1. Loud warning banner (centered left of Effects drawer) if audio/BlackHole has ANY issue
         if warning:
@@ -241,10 +251,12 @@ class PreviewUI:
                 gy0 = my1 + 4
                 gy1 = panel_y1 - 6
                 cv2.line(preview, (px0 + 10, gy0 - 2), (px1 - 10, gy0 - 2), (65, 70, 82), 1)
-                g_state = f"QR [{game_info.get('room', '----')}] ({game_info.get('players', 0)}p)"
+                h_cd = _ascii(str(game_info.get("her_code", game_info.get("room", "----"))))
+                y_cd = _ascii(str(game_info.get("host_code", "----")))
+                g_state = f"{h_cd}/{y_cd} ({game_info.get('players', 0)}p)"
                 cv2.putText(
                     preview,
-                    f"[q] Games: {g_state}",
+                    f"[q] QR: {g_state}",
                     (px0 + 14, gy0 + 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.43,
@@ -262,32 +274,34 @@ class PreviewUI:
             pad_x = 18
             gap_qr = 22 if qr_h is not None else 0
             card_w = max(250, pad_x * 2 + qw + (qw + gap_qr if qr_h is not None else 0))
-            cx0, cy0 = 16, 62
+            cx0, cy0 = 16, 138
             cx1, cy1 = min(w - 290, cx0 + card_w), cy0 + qh + 96
             _blend_panel(preview, cx0, cy0, cx1, cy1, (14, 22, 36), 0.92)
             cv2.rectangle(preview, (cx0, cy0), (cx1, cy1), (110, 230, 255), 1, cv2.LINE_AA)
+            h_cd = _ascii(str(game_info.get("her_code", "")))
+            y_cd = _ascii(str(game_info.get("host_code", "")))
             cv2.putText(
                 preview,
-                f"ROOM {game_info.get('room', '')} | 2-PHONE 1V1 QR",
+                f"GITHUB 1V1 QR  |  HER: {h_cd}   YOU: {y_cd}",
                 (cx0 + 14, cy0 + 24),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
+                0.44,
                 (110, 235, 255),
                 1,
                 cv2.LINE_AA,
             )
             qy = cy0 + 48
             qx_g = cx0 + pad_x
-            cv2.putText(preview, "HER PHONE (P1)", (qx_g, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (205, 165, 255), 1, cv2.LINE_AA)
+            cv2.putText(preview, f"HER PHONE ({h_cd})", (qx_g, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (205, 165, 255), 1, cv2.LINE_AA)
             if qy + qh < cy1 and qx_g + qw <= cx1:
                 preview[qy:qy + qh, qx_g:qx_g + qw] = qr_g
             if qr_h is not None:
                 qh2, qw2 = qr_h.shape[:2]
                 qx_h = qx_g + qw + gap_qr
-                cv2.putText(preview, "YOUR PHONE (P2)", (qx_h, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (110, 240, 255), 1, cv2.LINE_AA)
+                cv2.putText(preview, f"YOUR PHONE ({y_cd})", (qx_h, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (110, 240, 255), 1, cv2.LINE_AA)
                 if qy + qh2 < cy1 and qx_h + qw2 <= cx1:
                     preview[qy:qy + qh2, qx_h:qx_h + qw2] = qr_h
-            url_short = _ascii(str(game_info.get("url", "")))[:46]
+            url_short = _ascii(str(game_info.get("github_url") or game_info.get("url", "")))[:46]
             cv2.putText(
                 preview,
                 f"{url_short}   ([q] hide)",

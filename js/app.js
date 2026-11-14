@@ -72,49 +72,49 @@ function renderLobby(state) {
           <span class="g-tag">1V1 JINX</span>
           <div class="g-icon">🦐</div>
           <div class="g-title">Krillion</div>
-          <div class="g-desc">Pick the weirdest valid answer you can think of — 1v1 Her on phone vs Him on webcam across 80 prompts.</div>
+          <div class="g-desc">Pick the weirdest valid answer — 1v1 side-by-side Phones with live Ocean AR on FaceTime.</div>
         </button>
 
         <button class="game-card" data-pick="face_darts">
           <span class="g-tag">1V1 AR FACE</span>
           <div class="g-icon">🎯</div>
           <div class="g-title">3D Face Darts</div>
-          <div class="g-desc">1v1 throw suction darts at his webcam face — his open palm raises a live AR shield to block.</div>
+          <div class="g-desc">Throw suction darts at the live webcam avatar — an open palm on cam raises a glowing hex shield.</div>
         </button>
 
         <button class="game-card" data-pick="mouth_catch">
           <span class="g-tag">1V1 CAM CATCH</span>
           <div class="g-icon">🍩</div>
           <div class="g-title">3D Mouth Catch</div>
-          <div class="g-desc">1v1 toss frosted donuts at his webcam — he catches them on an open mouth or takes a forehead splat.</div>
+          <div class="g-desc">Toss frosted donuts toward the webcam — open wide to catch or take a live forehead splat.</div>
         </button>
 
         <button class="game-card" data-pick="pool">
           <span class="g-tag">1V1 TOP VIEW</span>
           <div class="g-icon">🎱</div>
           <div class="g-title">3D 8-Ball Pool</div>
-          <div class="g-desc">Top-down 1v1 8-ball — tap the felt to aim, pull the cue strike bar to shoot against his webcam gestures.</div>
+          <div class="g-desc">Top-down GamePigeon-style 8-ball on both phones — tap felt to aim, pull cue bar to shoot with live AR table.</div>
         </button>
 
         <button class="game-card" data-pick="beer_pong">
           <span class="g-tag">1V1 TURN PONG</span>
           <div class="g-icon">🥤</div>
           <div class="g-title">3D Cup Pong</div>
-          <div class="g-desc">1v1 flick to sink 6 or 10 Solo cups — 3 shots per turn, +1 free shot on every make.</div>
+          <div class="g-desc">2-phone flick to sink 6 or 10 Solo cups — 3 shots per turn, +1 free shot on every make.</div>
         </button>
 
         <button class="game-card" data-pick="classic_darts">
           <span class="g-tag">1V1 301</span>
           <div class="g-icon">🎯</div>
           <div class="g-title">3D Darts 301</div>
-          <div class="g-desc">1v1 flick toward the 301 board against his webcam throws, counting down cleanly to zero.</div>
+          <div class="g-desc">2-phone 301 showdown — flick toward the board and watch live aim &amp; stuck darts on cam.</div>
         </button>
 
         <button class="game-card" data-pick="word_duel">
           <span class="g-tag">1V1 RACE</span>
           <div class="g-icon">🟩</div>
           <div class="g-title">Word Duel</div>
-          <div class="g-desc">Same 5-letter word 1v1 race — Her on phone vs Him on webcam with live flipping tile colors.</div>
+          <div class="g-desc">Same 5-letter word 1v1 race on both phones with live side-by-side boards on FaceTime.</div>
         </button>
       </div>
     </div>
@@ -197,7 +197,10 @@ const ws = new WsClient(
   (online, label) => {
     dotEl.className = `dot ${online ? "online" : "offline"}`;
     roomEl.textContent = `ROOM ${label || "----"}`;
-    roleBtn.textContent = ws.role === "host" ? "Him (Host)" : (ws.role === "spectator" ? "Viewer" : "Her (Phone)");
+    roleBtn.textContent = ws.role === "host" ? "P2: Him (You) ⇄" : (ws.role === "spectator" ? "Viewer ⇄" : "P1: Her (You) ⇄");
+    if (online && latestState && mountedView?.update) {
+      mountedView.update(latestState);
+    }
     if (!online && !latestState && (label === "NEED ?ws=SERVER" || label === "MISSING ROOM")) {
       renderConnectPrompt(label);
     }

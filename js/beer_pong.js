@@ -100,12 +100,13 @@ export class BeerPongView {
       bounced: !!b.bounced,
     }));
 
-    const sig = `${bp.phase}|${bp.turn}|${bp.shotsLeft ?? 3}|${bp.cupCount}|${myAlive}|${bp.status}|${bp.practiceMode}|${bp.winner}|${JSON.stringify(bp.rules)}`;
+    const sig = `${bp.phase}|${bp.turn}|${bp.shotsLeft ?? 3}|${bp.cupCount}|${myAlive}|${bp.status}|${bp.practiceMode}|${bp.winner}|${this.myRole()}|${JSON.stringify(bp.rules)}`;
     if (sig !== this._lastSig || !this._canvas) {
       this._lastSig = sig;
       this._renderDOM(bp);
     } else if (!this._isMyTurn(bp) && this._liveAim) {
-      this._updatePowerBar(Number(this._liveAim.power || 0), "HIM AIMING");
+      const opp = this.myRole() === "host" ? "HER" : "HIM";
+      this._updatePowerBar(Number(this._liveAim.power || 0), `${opp} AIMING`);
     }
     this._syncSceneMeshes(bp);
   }
@@ -477,7 +478,12 @@ export class BeerPongView {
       });
     }
 
-    this._container.querySelector("#bp-turn").textContent = bp.turn === "host" ? "HIM'S TURN (WEBCAM)" : "HER TURN";
+    const turnTxt = bp.phase === "finished"
+      ? (bp.winner === "guest" ? "HER WINS!" : "HIM WINS!")
+      : myTurn
+      ? `YOUR TURN (${bp.turn === "guest" ? "P1" : "P2"})`
+      : (bp.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
+    this._container.querySelector("#bp-turn").textContent = turnTxt;
     const shotsEl = this._container.querySelector("#bp-shots");
     if (shotsEl) {
       shotsEl.textContent = shotsLeft > 6
@@ -487,8 +493,9 @@ export class BeerPongView {
     this._container.querySelector("#bp-gcups").textContent = String(guestAlive);
     this._container.querySelector("#bp-hcups").textContent = String(hostAlive);
     this._container.querySelector("#bp-heat").textContent = streak >= 2 ? `🔥 x${streak}` : "";
+    const oppLbl = this.myRole() === "host" ? "Her" : "Him";
     this._container.querySelector("#bp-status").textContent =
-      bp.status || (myTurn ? "Swipe upward fast — 3 shots a turn, +1 free shot per make" : "Wait for Him on webcam...");
+      bp.status || (myTurn ? "Swipe upward fast — 3 shots a turn, +1 free shot per make" : `Watching ${oppLbl} shoot...`);
     this._container.querySelector("#bp-cups").textContent = bp.cupCount === 10 ? "6 Cups" : "10 Cups";
     const swatBtn = this._container.querySelector("#bp-swat");
     if (swatBtn) swatBtn.style.display = activeBounced ? "block" : "none";

@@ -1,0 +1,30 @@
+{
+  "title": "KRILLION",
+  "subtitle": "SAY WHAT NOBODY ELSE WILL",
+  "tagline": "weirder answers go deeper",
+  "mascotName": "Krill",
+  "mascotAccent": "#ff4d7e",
+  "accentCyan": "#6ce5ff",
+  "accentPink": "#f45d86",
+  "bgSurface": "#060d18",
+  "bgAbyss": "#02040a",
+  "couplesRounds": 5,
+  "dailyRounds": 7,
+  "previewSeconds": 3,
+  "answerSeconds": 25,
+  "jinxPoints": 5,
+  "jinxLabel": "JINX! YOU TWO PICKED THE SAME ONE",
+  "bearing": [
+    { "min": 0, "max": 150, "name": "Plankton", "desc": "still basically on the beach" },
+    { "min": 151, "max": 250, "name": "Schooler", "desc": "blending right in with everyone else" },
+    { "min": 251, "max": 350, "name": "Rare", "desc": "okay, that's a good pull" },
+    { "min": 351, "max": 449, "name": "Deep cut", "desc": "seriously niche, nobody remembers that" },
+    { "min": 450, "max": 9999, "name": "One in a krillion", "desc": "actually absurd, living in the trench" }
+  ],
+  "forfeits": [
+    "wear the seaweed crown next game",
+    "bubble helmet for a round",
+    "tiny pixel shrimp buddy",
+    "glow-stick neon outline"
+  ]
+}

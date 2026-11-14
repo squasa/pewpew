@@ -1,0 +1,222 @@
+// Main PewPew Arcade Router + WebSocket Lifecycle
+
+import { WsClient, SoundFX } from "./ws_client.js";
+import { RareAnswerView } from "./rare_answer.js";
+import { FaceDartsView } from "./face_darts.js";
+import { MouthCatchView } from "./mouth_catch.js";
+import { PoolView } from "./pool.js";
+import { BeerPongView } from "./beer_pong.js";
+import { ClassicDartsView } from "./classic_darts.js";
+import { WordDuelView } from "./word_duel.js";
+
+const stageEl = document.getElementById("stage");
+const dotEl = document.getElementById("conn-dot");
+const roomEl = document.getElementById("room-label");
+const homeBtn = document.getElementById("btn-home");
+const roleBtn = document.getElementById("btn-role-switch");
+const soundBtn = document.getElementById("btn-sound");
+
+const sfx = new SoundFX();
+let latestState = null;
+let mountedGame = null;
+let mountedView = null;
+
+const views = {
+  rare_answer: new RareAnswerView(null, sfx, () => ws.selectGame("lobby")),
+  face_darts: null,
+  mouth_catch: null,
+  pool: null,
+  beer_pong: null,
+  classic_darts: null,
+  word_duel: null,
+};
+
+function initViews(wsClient) {
+  views.rare_answer = new RareAnswerView(wsClient, sfx, () => wsClient.selectGame("lobby"));
+  views.face_darts = new FaceDartsView(wsClient, sfx);
+  views.mouth_catch = new MouthCatchView(wsClient, sfx);
+  views.pool = new PoolView(wsClient, sfx, () => wsClient.role);
+  views.beer_pong = new BeerPongView(wsClient, sfx, () => wsClient.role);
+  views.classic_darts = new ClassicDartsView(wsClient, sfx, () => wsClient.role);
+  views.word_duel = new WordDuelView(wsClient, sfx, () => wsClient.role);
+}
+
+function _formatPlayers(players) {
+  if (!players?.length) return "Waiting on friends...";
+  const items = players.map((p) => {
+    const tag = p.role === "guest" ? "P1" : (p.role === "host" ? "P2" : "Viewer");
+    const label = p.role === "guest" ? "Her" : (p.role === "host" ? "Him" : "Viewer");
+    const nm = (p.name || "").trim();
+    const shown = nm || label;
+    return tag === "Viewer" ? `Viewer: ${shown}` : `${tag}: ${shown}`;
+  });
+  return `Online · ${items.join(" · ")}`;
+}
+
+function renderLobby(state) {
+  const pSummary = _formatPlayers(state?.players);
+  stageEl.innerHTML = `
+    <div class="hub-wrap">
+      <div class="hub-hero">
+        <h1>PEWPEW ARCADE</h1>
+        <p>${pSummary}</p>
+      </div>
+
+      <div class="profile-bar">
+        <input id="hub-name-inp" placeholder="Your nickname…" value="${ws.name || ""}" maxlength="20" />
+        <button class="btn-cyan" id="hub-save-name">Save</button>
+      </div>
+
+      <div class="game-grid">
+        <button class="game-card featured" data-pick="rare_answer">
+          <span class="g-tag">1V1 JINX</span>
+          <div class="g-icon">🦐</div>
+          <div class="g-title">Krillion</div>
+          <div class="g-desc">Pick the weirdest valid answer you can think of — 1v1 Her on phone vs Him on webcam across 80 prompts.</div>
+        </button>
+
+        <button class="game-card" data-pick="face_darts">
+          <span class="g-tag">1V1 AR FACE</span>
+          <div class="g-icon">🎯</div>
+          <div class="g-title">3D Face Darts</div>
+          <div class="g-desc">1v1 throw suction darts at his webcam face — his open palm raises a live AR shield to block.</div>
+        </button>
+
+        <button class="game-card" data-pick="mouth_catch">
+          <span class="g-tag">1V1 CAM CATCH</span>
+          <div class="g-icon">🍩</div>
+          <div class="g-title">3D Mouth Catch</div>
+          <div class="g-desc">1v1 toss frosted donuts at his webcam — he catches them on an open mouth or takes a forehead splat.</div>
+        </button>
+
+        <button class="game-card" data-pick="pool">
+          <span class="g-tag">1V1 TOP VIEW</span>
+          <div class="g-icon">🎱</div>
+          <div class="g-title">3D 8-Ball Pool</div>
+          <div class="g-desc">Top-down 1v1 8-ball — tap the felt to aim, pull the cue strike bar to shoot against his webcam gestures.</div>
+        </button>
+
+        <button class="game-card" data-pick="beer_pong">
+          <span class="g-tag">1V1 TURN PONG</span>
+          <div class="g-icon">🥤</div>
+          <div class="g-title">3D Cup Pong</div>
+          <div class="g-desc">1v1 flick to sink 6 or 10 Solo cups — 3 shots per turn, +1 free shot on every make.</div>
+        </button>
+
+        <button class="game-card" data-pick="classic_darts">
+          <span class="g-tag">1V1 301</span>
+          <div class="g-icon">🎯</div>
+          <div class="g-title">3D Darts 301</div>
+          <div class="g-desc">1v1 flick toward the 301 board against his webcam throws, counting down cleanly to zero.</div>
+        </button>
+
+        <button class="game-card" data-pick="word_duel">
+          <span class="g-tag">1V1 RACE</span>
+          <div class="g-icon">🟩</div>
+          <div class="g-title">Word Duel</div>
+          <div class="g-desc">Same 5-letter word 1v1 race — Her on phone vs Him on webcam with live flipping tile colors.</div>
+        </button>
+      </div>
+    </div>
+  `;
+
+  stageEl.querySelectorAll("[data-pick]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      sfx.unlock();
+      ws.selectGame(btn.getAttribute("data-pick"));
+    });
+  });
+
+  stageEl.querySelector("#hub-save-name")?.addEventListener("click", () => {
+    const val = stageEl.querySelector("#hub-name-inp")?.value || "";
+    ws.setProfile(val);
+  });
+}
+
+function syncUI(state) {
+  latestState = state;
+  const target = state?.activeGame || "lobby";
+  homeBtn.style.visibility = target === "lobby" ? "hidden" : "visible";
+
+  if (target !== mountedGame) {
+    if (mountedView?.unmount) mountedView.unmount();
+    mountedView = null;
+    mountedGame = target;
+
+    if (target === "lobby") {
+      renderLobby(state);
+      return;
+    }
+    const v = views[target];
+    if (v) {
+      mountedView = v;
+      v.mount(stageEl, state);
+      return;
+    }
+  }
+
+  if (target === "lobby") {
+    // Only refresh player summary text if name input isn't focused
+    const inp = stageEl.querySelector("#hub-name-inp");
+    if (!inp || document.activeElement !== inp) {
+      const pEl = stageEl.querySelector(".hub-hero p");
+      if (pEl) {
+        pEl.textContent = _formatPlayers(state.players);
+      }
+    }
+  } else if (mountedView?.update) {
+    mountedView.update(state);
+  }
+}
+
+function renderConnectPrompt(reason) {
+  stageEl.innerHTML = `
+    <div class="hub-wrap" style="max-width:460px;margin:24px auto;">
+      <div class="hub-hero">
+        <h1>PEWPEW 1V1 CONNECT</h1>
+        <p>${reason === "MISSING ROOM" ? "Enter your Room Code from the Mac pewpew window." : "Connect this GitHub Pages phone controller to your Mac tunnel (wss://... or host:port)."}</p>
+      </div>
+      <div class="game-panel" style="gap:10px;">
+        <label style="font-size:12px;color:var(--text-dim);">Server / Tunnel Host (?ws=)</label>
+        <input id="gh-ws-inp" placeholder="e.g. abc-xyz.trycloudflare.com or 192.168.x.x:8770" value="${ws.wsOrigin || ""}" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:#0f172a;color:#fff;" />
+        <label style="font-size:12px;color:var(--text-dim);">4-Letter Room Code (?room=)</label>
+        <input id="gh-room-inp" placeholder="e.g. ABCD" value="${ws.room || ""}" maxlength="8" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:#0f172a;color:#fff;text-transform:uppercase;" />
+        <button class="btn-primary" id="gh-connect-btn" style="width:100%;">Connect to 1v1 Room</button>
+      </div>
+    </div>
+  `;
+  stageEl.querySelector("#gh-connect-btn")?.addEventListener("click", () => {
+    const srv = stageEl.querySelector("#gh-ws-inp")?.value || "";
+    const rm = stageEl.querySelector("#gh-room-inp")?.value || "";
+    ws.setTarget(srv, rm);
+  });
+}
+
+const ws = new WsClient(
+  (state) => syncUI(state),
+  (online, label) => {
+    dotEl.className = `dot ${online ? "online" : "offline"}`;
+    roomEl.textContent = `ROOM ${label || "----"}`;
+    roleBtn.textContent = ws.role === "host" ? "Him (Host)" : (ws.role === "spectator" ? "Viewer" : "Her (Phone)");
+    if (!online && !latestState && (label === "NEED ?ws=SERVER" || label === "MISSING ROOM")) {
+      renderConnectPrompt(label);
+    }
+  },
+  (ack) => {
+    if (mountedView?.onAck) mountedView.onAck(ack);
+  }
+);
+
+initViews(ws);
+ws.connect();
+
+homeBtn.addEventListener("click", () => ws.selectGame("lobby"));
+roleBtn.addEventListener("click", () => {
+  const nextRole = ws.role === "guest" ? "host" : "guest";
+  ws.setProfile(ws.name, nextRole);
+});
+soundBtn.addEventListener("click", () => {
+  sfx.enabled = !sfx.enabled;
+  soundBtn.textContent = sfx.enabled ? "🔊" : "🔇";
+  if (sfx.enabled) sfx.unlock();
+});

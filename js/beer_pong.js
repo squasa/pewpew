@@ -105,7 +105,7 @@ export class BeerPongView {
       this._lastSig = sig;
       this._renderDOM(bp);
     } else if (!this._isMyTurn(bp) && this._liveAim) {
-      const opp = this.myRole() === "host" ? "HER" : "HIM";
+      const opp = this.myRole() === "host" ? this.ws.playerName("guest").toUpperCase() : this.ws.playerName("host").toUpperCase();
       this._updatePowerBar(Number(this._liveAim.power || 0), `${opp} AIMING`);
     }
     this._syncSceneMeshes(bp);
@@ -438,7 +438,7 @@ export class BeerPongView {
         <div class="game-panel">
           <div class="hud-row">
             <span><strong id="bp-turn"></strong> · <span id="bp-shots" style="letter-spacing:2px;"></span></span>
-            <span>Her <strong id="bp-gcups" style="color:var(--accent-pink);"></strong> · Him <strong id="bp-hcups" style="color:var(--accent-cyan);"></strong></span>
+            <span><span id="bp-p1n">P1</span> <strong id="bp-gcups" style="color:var(--accent-pink);"></strong> · <span id="bp-p2n">P2</span> <strong id="bp-hcups" style="color:var(--accent-cyan);"></strong></span>
             <span id="bp-heat" style="color:var(--gold);font-weight:700;"></span>
           </div>
           <div class="canvas-frame" style="background:#0d0b0a;box-shadow:inset 0 0 36px rgba(0,0,0,0.72);">
@@ -478,12 +478,17 @@ export class BeerPongView {
       });
     }
 
+    const p1 = this.ws.playerName("guest");
+    const p2 = this.ws.playerName("host");
+    const activeName = bp.turn === "guest" ? p1 : p2;
     const turnTxt = bp.phase === "finished"
-      ? (bp.winner === "guest" ? "HER WINS!" : "HIM WINS!")
+      ? (bp.winner === "guest" ? `${p1.toUpperCase()} WINS!` : `${p2.toUpperCase()} WINS!`)
       : myTurn
-      ? `YOUR TURN (${bp.turn === "guest" ? "P1" : "P2"})`
-      : (bp.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
+      ? `YOUR TURN (${activeName})`
+      : `${activeName.toUpperCase()}'S TURN`;
     this._container.querySelector("#bp-turn").textContent = turnTxt;
+    this._container.querySelector("#bp-p1n").textContent = p1;
+    this._container.querySelector("#bp-p2n").textContent = p2;
     const shotsEl = this._container.querySelector("#bp-shots");
     if (shotsEl) {
       shotsEl.textContent = shotsLeft > 6
@@ -493,7 +498,7 @@ export class BeerPongView {
     this._container.querySelector("#bp-gcups").textContent = String(guestAlive);
     this._container.querySelector("#bp-hcups").textContent = String(hostAlive);
     this._container.querySelector("#bp-heat").textContent = streak >= 2 ? `🔥 x${streak}` : "";
-    const oppLbl = this.myRole() === "host" ? "Her" : "Him";
+    const oppLbl = this.myRole() === "host" ? p1 : p2;
     this._container.querySelector("#bp-status").textContent =
       bp.status || (myTurn ? "Swipe upward fast — 3 shots a turn, +1 free shot per make" : `Watching ${oppLbl} shoot...`);
     this._container.querySelector("#bp-cups").textContent = bp.cupCount === 10 ? "6 Cups" : "10 Cups";

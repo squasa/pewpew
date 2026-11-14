@@ -86,7 +86,7 @@ export class ClassicDartsView {
       this._lastSig = sig;
       this._renderDOM(cd);
     } else if (!this._isMyTurn(cd) && this._liveAim) {
-      const opp = this.myRole() === "host" ? "HER" : "HIM";
+      const opp = this.myRole() === "host" ? this.ws.playerName("guest").toUpperCase() : this.ws.playerName("host").toUpperCase();
       this._updatePowerBar(Number(this._liveAim.power || 0), `${opp} AIMING`);
     }
     this._syncStuckDarts(cd);
@@ -286,9 +286,9 @@ export class ClassicDartsView {
       this._container.innerHTML = `
         <div class="game-panel">
           <div class="hud-row">
-            <span style="color:var(--accent-pink);">Her: <strong id="cd-gs" style="font-size:20px;"></strong></span>
+            <span style="color:var(--accent-pink);"><span id="cd-p1n">P1</span>: <strong id="cd-gs" style="font-size:20px;"></strong></span>
             <span>Darts <strong id="cd-left"></strong> · <span id="cd-turn"></span></span>
-            <span style="color:var(--accent-cyan);">Him: <strong id="cd-hs" style="font-size:20px;"></strong></span>
+            <span style="color:var(--accent-cyan);"><span id="cd-p2n">P2</span>: <strong id="cd-hs" style="font-size:20px;"></strong></span>
           </div>
           <div class="canvas-frame" style="background:#0d0b0a;">
             <canvas id="cd-3d-canvas" width="540" height="390" style="width:100%;height:390px;display:block;touch-action:none;"></canvas>
@@ -317,17 +317,22 @@ export class ClassicDartsView {
       );
     }
 
+    const p1 = this.ws.playerName("guest");
+    const p2 = this.ws.playerName("host");
+    const activeName = cd.turn === "guest" ? p1 : p2;
     const mine = this._isMyTurn(cd);
-    const oppLbl = this.myRole() === "host" ? "Her" : "Him";
+    const oppLbl = this.myRole() === "host" ? p1 : p2;
+    this._container.querySelector("#cd-p1n").textContent = p1;
+    this._container.querySelector("#cd-p2n").textContent = p2;
     this._container.querySelector("#cd-gs").textContent = String(cd.scores.guest);
     this._container.querySelector("#cd-hs").textContent = String(cd.scores.host);
     this._container.querySelector("#cd-left").textContent = String(cd.dartsLeft);
     this._container.querySelector("#cd-turn").textContent =
       cd.phase === "finished"
-        ? (cd.winner === "guest" ? "HER WINS!" : "HIM WINS!")
+        ? (cd.winner === "guest" ? `${p1.toUpperCase()} WINS!` : `${p2.toUpperCase()} WINS!`)
         : mine
-        ? `YOUR TURN (${cd.turn === "guest" ? "P1" : "P2"})`
-        : (cd.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
+        ? `YOUR TURN (${activeName})`
+        : `${activeName.toUpperCase()}'S TURN`;
     this._container.querySelector("#cd-dbl").checked = !!cd.doubleOut;
     this._container.querySelector("#cd-status").textContent =
       cd.status || (mine ? "Swipe UP smoothly toward a sector to flick!" : `Watching ${oppLbl} aim live...`);

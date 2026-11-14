@@ -582,7 +582,7 @@ export class RareAnswerView {
           ${this._krillMascotSvg(theme, 62)}
         </div>
         <h1 class="krill-title">${this._esc(theme.title || "KRILLION")}</h1>
-        <div class="krill-sub">1V1 JINX · HER PHONE VS HIM WEBCAM</div>
+        <div class="krill-sub">1V1 JINX · ${this._esc(this.ws.playerName("guest").toUpperCase())} VS ${this._esc(this.ws.playerName("host").toUpperCase())}</div>
         <p style="font-size:12px;color:var(--text-dim);margin:8px 0 12px;">
           ${this._esc(theme.tagline || "weirder answers go deeper")}
         </p>
@@ -598,7 +598,7 @@ export class RareAnswerView {
         </button>
         ${this._howToOpen ? `
           <div style="text-align:left;font-family:var(--font-sans);font-size:12px;color:#b8cee6;margin-top:8px;padding:10px 12px;background:rgba(0,0,0,0.34);border-radius:8px;line-height:1.5;">
-            Pick any real answer that fits — Her on Phone vs Him typing directly on his Webcam window. Obscure true answers can hit <strong>+100 pts (-1,000m)</strong> while obvious picks only get +10 pts, and matching answers jinx you both to 5 pts.
+            Pick any real answer that fits — 1v1 head-to-head on your phones &amp; webcam. Obscure true answers can hit <strong>+100 pts (-1,000m)</strong> while obvious picks only get +10 pts, and matching answers jinx you both to 5 pts.
           </div>
         ` : ""}
 
@@ -1098,7 +1098,7 @@ export class RareAnswerView {
         ${ra.mode === "couples" && ra.forfeit ? `
           <div style="border:1px solid rgba(244,93,134,0.45);border-radius:10px;padding:10px;margin:10px 0;font-size:12px;">
             <div style="color:var(--accent-pink);font-weight:800;">CAMERA FORFEIT ACTIVE</div>
-            <div style="margin:4px 0 8px;">${this._esc(ra.loserRole === "guest" ? "Guest" : "Host")} wears <strong>${this._esc(ra.forfeit.replace("_", " "))}</strong> on cam!</div>
+            <div style="margin:4px 0 8px;">${this._esc(this.ws.playerName(ra.loserRole === "guest" ? "guest" : "host"))} wears <strong>${this._esc(ra.forfeit.replace("_", " "))}</strong> on cam!</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               ${["seaweed", "bubble_helmet", "shrimp_partner", "neon_glow"].map((fk) => `
                 <button class="pill-btn ${ra.forfeit === fk ? "active" : ""}" data-krill-forfeit="${fk}">${fk.replace("_", " ")}</button>

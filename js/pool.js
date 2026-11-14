@@ -534,20 +534,22 @@ export class PoolView {
     if (!fill || !labelEl || !this._liveAim) return;
     const pwr = Math.max(0, Math.min(1, Number(this._liveAim.power || 0)));
     const pct = Math.round(pwr * 100);
-    const opp = this.myRole() === "host" ? "HER" : "HIM";
+    const opp = this.myRole() === "host" ? this.ws.playerName("guest").toUpperCase() : this.ws.playerName("host").toUpperCase();
     fill.style.width = `${pct}%`;
     fill.style.background = pwr <= 0.5 ? "linear-gradient(90deg,#22c55e,#eab308)" : "linear-gradient(90deg,#22c55e,#eab308 55%,#ef4444)";
     labelEl.textContent = pwr > 0.02 ? `${opp} AIMING · POWER ${pct}%` : `${opp} AIMING ON PHONE...`;
   }
 
   _renderDOM(p) {
+    const p1 = this.ws.playerName("guest");
+    const p2 = this.ws.playerName("host");
     const keepCanvas = this._canvas && this._container.querySelector("#pool-3d-canvas");
     if (!keepCanvas) {
       this._container.innerHTML = `
         <div class="game-panel">
           <div class="hud-row">
             <span><strong id="pool-turn"></strong></span>
-            <span>Her: <strong id="pool-gg" style="color:var(--accent-pink);"></strong> · Him: <strong id="pool-hg" style="color:var(--accent-cyan);"></strong></span>
+            <span><span id="pool-p1n">P1</span>: <strong id="pool-gg" style="color:var(--accent-pink);"></strong> · <span id="pool-p2n">P2</span>: <strong id="pool-hg" style="color:var(--accent-cyan);"></strong></span>
           </div>
           <div class="canvas-frame" style="background:#0d0b0a;position:relative;">
             <canvas id="pool-3d-canvas" width="540" height="320" style="width:100%;aspect-ratio:540/320;height:auto;display:block;touch-action:none;"></canvas>
@@ -577,18 +579,21 @@ export class PoolView {
     }
 
     const mine = this._isMyTurn(p);
+    const activeName = p.turn === "guest" ? p1 : p2;
     const turnLabel =
       p.phase === "finished"
-        ? (p.winner === "guest" ? "HER WINS!" : p.winner === "host" ? "HIM WINS!" : "GAME OVER")
+        ? (p.winner === "guest" ? `${p1.toUpperCase()} WINS!` : p.winner === "host" ? `${p2.toUpperCase()} WINS!` : "GAME OVER")
         : mine
-        ? `YOUR TURN (${p.turn === "guest" ? "P1 HER" : "P2 HIM"})`
-        : (p.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)");
+        ? `YOUR TURN (${activeName})`
+        : `${activeName.toUpperCase()}'S TURN`;
 
     this._container.querySelector("#pool-turn").textContent = turnLabel;
+    this._container.querySelector("#pool-p1n").textContent = p1;
+    this._container.querySelector("#pool-p2n").textContent = p2;
     this._container.querySelector("#pool-gg").textContent = p.groups.guest || "open";
     this._container.querySelector("#pool-hg").textContent = p.groups.host || "open";
     this._container.querySelector("#pool-status").textContent =
-      p.status || (p.phase === "ball_in_hand" ? "Tap table to place cue ball!" : mine ? "Tap felt to aim · Drag green/gold cue bar to shoot!" : "Watching opponent's aim live...");
+      p.status || (p.phase === "ball_in_hand" ? "Tap table to place cue ball!" : mine ? "Tap felt to aim · Drag green/gold cue bar to shoot!" : `Watching ${activeName} aim live...`);
 
     const bar = this._container.querySelector("#pool-strike-bar");
     const labelEl = this._container.querySelector("#pool-strike-label");
@@ -601,7 +606,7 @@ export class PoolView {
           ? "TAP FELT ABOVE TO PLACE CUE BALL"
           : mine
           ? "DRAG HERE TO PULL CUE & SHOOT · 0%"
-          : `${p.turn === "host" ? "HIM'S TURN (P2)" : "HER TURN (P1)"} · WATCHING`;
+          : `${activeName.toUpperCase()}'S TURN · WATCHING`;
     }
   }
 

@@ -312,6 +312,7 @@ export class WsClient {
     this.ws = null;
     this.role = "guest";
     this.name = localStorage.getItem("pewpew_name") || "";
+    this.players = [];
     this.clientId = this._resolveClientId();
     this.room = this._resolveRoom();
     this.wsOrigin = this._resolveWsOrigin();
@@ -610,6 +611,7 @@ export class WsClient {
       else if (msg.room) this.room = msg.room;
       this.onStatus(true, this.room, msg);
     } else if (msg.type === "state") {
+      if (Array.isArray(msg.players)) this.players = msg.players;
       this.onState(msg);
     } else if (msg.type === "error") {
       if (msg.code === "bad_room" || msg.code === "expired") {
@@ -663,5 +665,13 @@ export class WsClient {
     const msg = { type: "set_profile", name: this.name };
     if (role) msg.role = role;
     this.send(msg);
+  }
+
+  playerName(role) {
+    const found = (this.players || []).find((p) => p.role === role);
+    const nm = (found?.name || "").trim();
+    if (nm) return nm.slice(0, 14);
+    if (role === this.role && (this.name || "").trim()) return this.name.trim().slice(0, 14);
+    return role === "host" ? "P2" : (role === "guest" ? "P1" : "Viewer");
   }
 }

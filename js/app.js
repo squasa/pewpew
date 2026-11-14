@@ -45,9 +45,8 @@ function _formatPlayers(players) {
   if (!players?.length) return "Waiting on friends...";
   const items = players.map((p) => {
     const tag = p.role === "guest" ? "P1" : (p.role === "host" ? "P2" : "Viewer");
-    const label = p.role === "guest" ? "Her" : (p.role === "host" ? "Him" : "Viewer");
     const nm = (p.name || "").trim();
-    const shown = nm || label;
+    const shown = nm || tag;
     return tag === "Viewer" ? `Viewer: ${shown}` : `${tag}: ${shown}`;
   });
   return `Online · ${items.join(" · ")}`;
@@ -133,8 +132,20 @@ function renderLobby(state) {
   });
 }
 
+function _refreshHeaderRole() {
+  if (!roleBtn) return;
+  if (ws.role === "spectator") {
+    roleBtn.textContent = "Viewer ⇄";
+  } else {
+    const pTag = ws.role === "host" ? "P2" : "P1";
+    const nm = ws.playerName(ws.role);
+    roleBtn.textContent = nm && nm !== pTag ? `${pTag}: ${nm} ⇄` : `${pTag} (You) ⇄`;
+  }
+}
+
 function syncUI(state) {
   latestState = state;
+  _refreshHeaderRole();
   const target = state?.activeGame || "lobby";
   homeBtn.style.visibility = target === "lobby" ? "hidden" : "visible";
 
@@ -180,20 +191,28 @@ function renderConnectPrompt(reason, errMsg = "") {
     <div class="hub-wrap" style="max-width:420px;margin:28px auto;">
       <div class="hub-hero">
         <h1>PEWPEW 1V1</h1>
-        <p>Enter your 4-character code shown on the webcam (<b>HER CODE</b> or <b>YOUR CODE</b>).</p>
+        <p>Enter your 4-character player code shown on the webcam and choose a nickname.</p>
       </div>
       <div class="game-panel" style="gap:12px;">
         ${errHtml}
+        <label style="font-size:12px;color:var(--text-dim);letter-spacing:0.06em;">YOUR NICKNAME</label>
+        <input id="gh-name-inp" placeholder="e.g. Alex" value="${(ws.name || "").replace(/"/g, "&quot;")}" maxlength="16" autocomplete="off" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(148,163,184,0.35);background:#0f172a;color:#fff;font-size:16px;font-weight:700;" />
         <label style="font-size:12px;color:var(--text-dim);letter-spacing:0.06em;">PLAYER CODE</label>
         <input id="gh-code-inp" placeholder="e.g. K7M1" value="${ws.room || ""}" maxlength="6" autocomplete="off" autocapitalize="characters" style="width:100%;padding:14px 12px;border-radius:12px;border:1px solid rgba(103,232,249,0.45);background:#0f172a;color:#fff;text-transform:uppercase;text-align:center;font-size:26px;font-weight:900;letter-spacing:0.24em;" />
         <button class="btn-primary" id="gh-connect-btn" style="width:100%;padding:14px;font-size:16px;">Join 1v1 Room</button>
       </div>
     </div>
   `;
+  const nameInp = stageEl.querySelector("#gh-name-inp");
   const inp = stageEl.querySelector("#gh-code-inp");
   const submit = () => {
     const code = (inp?.value || "").trim().toUpperCase();
     if (code.length < 3) return;
+    const nick = (nameInp?.value || "").trim().slice(0, 16);
+    if (nick) {
+      ws.name = nick;
+      localStorage.setItem("pewpew_name", nick);
+    }
     latestState = null;
     ws.setCode(code);
     renderConnecting(code);
@@ -228,7 +247,7 @@ const ws = new WsClient(
   (online, label, meta = {}) => {
     dotEl.className = `dot ${online ? "online" : "offline"}`;
     roomEl.textContent = `CODE ${label || "----"} ✎`;
-    roleBtn.textContent = ws.role === "host" ? "P2: Him (You) ⇄" : (ws.role === "spectator" ? "Viewer ⇄" : "P1: Her (You) ⇄");
+    _refreshHeaderRole();
     if (online && latestState && mountedView?.update) {
       mountedView.update(latestState);
     }

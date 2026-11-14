@@ -48,9 +48,10 @@ class PreviewUI:
         "saber": True,
         "face": False,
         "affection": False,
+        "games": True,
+        "mirror": True,
     })
-    menu_open: bool = True
-    qr_open: bool = False
+    menu_open: bool = False
     _hitboxes: list[tuple[int, int, int, int, str]] = field(default_factory=list)
     _pending_actions: list[str] = field(default_factory=list)
 
@@ -90,73 +91,96 @@ class PreviewUI:
         h, w = preview.shape[:2]
         self._hitboxes.clear()
 
-        # Compute right-side menu bounds first so top warning never overlaps it
+        # Compute right-side menu bounds first so top bar never overlaps it
         px1 = w - 16
         px0 = px1 - 268
-        py0 = 16
+        py0 = 10
 
-        # 0. Top-left/center clickable 1v1 Games Switcher Strip (preview only)
+        # 0. Top-left/center clickable 1v1 Games + Mirror + Switcher Strip (preview only)
         if game_info is not None:
+            games_on = self.filters.get("games", True)
+            mirror_on = self.filters.get("mirror", True)
             cur_g = str(game_info.get("game", "lobby"))
-            tabs = [
-                ("lobby", "Hub"),
-                ("pool", "Pool"),
-                ("beer_pong", "Pong"),
-                ("classic_darts", "301"),
-                ("face_darts", "FaceDarts"),
-                ("mouth_catch", "Catch"),
-                ("rare_answer", "Krillion"),
-                ("word_duel", "Words"),
-            ]
-            tx = 14
-            ty0, ty1 = 14, 44
-            for gid, glbl in tabs:
-                (tw, _), _ = cv2.getTextSize(glbl, cv2.FONT_HERSHEY_SIMPLEX, 0.43, 1)
-                bw = tw + 18
-                if tx + bw >= px0 - 110:
-                    break
-                active = (gid == cur_g)
-                _blend_panel(preview, tx, ty0, tx + bw, ty1, (38, 92, 118) if active else (24, 28, 38), 0.88)
-                cv2.rectangle(preview, (tx, ty0), (tx + bw, ty1), (110, 235, 255) if active else (80, 92, 112), 1, cv2.LINE_AA)
-                cv2.putText(preview, glbl, (tx + 9, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (255, 255, 255) if active else (200, 212, 228), 1, cv2.LINE_AA)
-                self._hitboxes.append((tx, ty0, tx + bw, ty1, f"game:{gid}"))
-                tx += bw + 6
-            _blend_panel(preview, tx, ty0, tx + 54, ty1, (38, 86, 108) if self.qr_open else (26, 32, 44), 0.88)
-            cv2.rectangle(preview, (tx, ty0), (tx + 54, ty1), (110, 235, 255) if self.qr_open else (90, 102, 124), 1, cv2.LINE_AA)
-            cv2.putText(preview, "QR", (tx + 16, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (240, 248, 255), 1, cv2.LINE_AA)
-            self._hitboxes.append((tx, ty0, tx + 54, ty1, "toggle_qr"))
-            tx += 60
-            if cur_g != "lobby" and tx + 68 < px0 - 8:
-                _blend_panel(preview, tx, ty0, tx + 66, ty1, (34, 42, 60), 0.88)
-                cv2.rectangle(preview, (tx, ty0), (tx + 66, ty1), (130, 165, 210), 1, cv2.LINE_AA)
-                cv2.putText(preview, "Reset", (tx + 12, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (235, 242, 252), 1, cv2.LINE_AA)
-                self._hitboxes.append((tx, ty0, tx + 66, ty1, "game_reset"))
-                tx += 72
+            tx = 12
+            ty0, ty1 = 10, 40
+
+            g_lbl = "Games:ON" if games_on else "Games:OFF [g]"
+            (gw, _), _ = cv2.getTextSize(g_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            gbw = gw + 14
+            _blend_panel(preview, tx, ty0, tx + gbw, ty1, (32, 92, 68) if games_on else (64, 34, 44), 0.90)
+            cv2.rectangle(preview, (tx, ty0), (tx + gbw, ty1), (95, 235, 145) if games_on else (225, 115, 130), 1, cv2.LINE_AA)
+            cv2.putText(preview, g_lbl, (tx + 7, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (240, 255, 246) if games_on else (255, 215, 220), 1, cv2.LINE_AA)
+            self._hitboxes.append((tx, ty0, tx + gbw, ty1, "filter:games"))
+            tx += gbw + 5
+
+            m_lbl = "Mirror:ON" if mirror_on else "Mirror:OFF"
+            (mw, _), _ = cv2.getTextSize(m_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            mbw = mw + 14
+            _blend_panel(preview, tx, ty0, tx + mbw, ty1, (32, 68, 96) if mirror_on else (36, 40, 50), 0.90)
+            cv2.rectangle(preview, (tx, ty0), (tx + mbw, ty1), (110, 225, 255) if mirror_on else (110, 120, 138), 1, cv2.LINE_AA)
+            cv2.putText(preview, m_lbl, (tx + 7, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (235, 248, 255) if mirror_on else (190, 200, 215), 1, cv2.LINE_AA)
+            self._hitboxes.append((tx, ty0, tx + mbw, ty1, "filter:mirror"))
+            tx += mbw + 5
+
+            if games_on:
+                tabs = [
+                    ("lobby", "Hub"),
+                    ("pool", "Pool"),
+                    ("beer_pong", "Pong"),
+                    ("classic_darts", "301"),
+                    ("face_darts", "Face"),
+                    ("mouth_catch", "Catch"),
+                    ("rare_answer", "Krill"),
+                    ("word_duel", "Words"),
+                ]
+                for gid, glbl in tabs:
+                    (tw, _), _ = cv2.getTextSize(glbl, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+                    bw = tw + 14
+                    if tx + bw >= px0 - 8:
+                        break
+                    active = (gid == cur_g)
+                    _blend_panel(preview, tx, ty0, tx + bw, ty1, (38, 92, 118) if active else (24, 28, 38), 0.88)
+                    cv2.rectangle(preview, (tx, ty0), (tx + bw, ty1), (110, 235, 255) if active else (80, 92, 112), 1, cv2.LINE_AA)
+                    cv2.putText(preview, glbl, (tx + 7, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255) if active else (200, 212, 228), 1, cv2.LINE_AA)
+                    self._hitboxes.append((tx, ty0, tx + bw, ty1, f"game:{gid}"))
+                    tx += bw + 5
+                if cur_g != "lobby" and tx + 60 < px0 - 8:
+                    _blend_panel(preview, tx, ty0, tx + 56, ty1, (34, 42, 60), 0.88)
+                    cv2.rectangle(preview, (tx, ty0), (tx + 56, ty1), (130, 165, 210), 1, cv2.LINE_AA)
+                    cv2.putText(preview, "Reset", (tx + 9, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (235, 242, 252), 1, cv2.LINE_AA)
+                    self._hitboxes.append((tx, ty0, tx + 56, ty1, "game_reset"))
+                    tx += 61
+
             her_c = _ascii(str(game_info.get("her_code", "")))
             you_c = _ascii(str(game_info.get("host_code", "")))
-            if her_c and you_c and tx + 190 < px0 - 8:
-                code_lbl = f"HER {her_c} | YOU {you_c} ({game_info.get('players', 0)}/2)"
-                (cw2, _), _ = cv2.getTextSize(code_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.41, 1)
-                cw2 = min(px0 - 8 - tx, cw2 + 18)
+            p1_lbl = _ascii(str(game_info.get("p1_name") or "P1"))[:8]
+            p2_lbl = _ascii(str(game_info.get("p2_name") or "P2"))[:8]
+            if her_c and you_c and tx + 130 < px0 - 8:
+                code_lbl = f"{p1_lbl} [{her_c}] | {p2_lbl} [{you_c}] ({game_info.get('players', 0)}/2)"
+                (cw2, _), _ = cv2.getTextSize(code_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.39, 1)
+                if tx + cw2 + 16 > px0 - 8:
+                    code_lbl = f"{her_c} | {you_c} ({game_info.get('players', 0)}/2)"
+                    (cw2, _), _ = cv2.getTextSize(code_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.39, 1)
+                cw2 = min(px0 - 8 - tx, cw2 + 16)
                 _blend_panel(preview, tx, ty0, tx + cw2, ty1, (20, 34, 48), 0.90)
                 cv2.rectangle(preview, (tx, ty0), (tx + cw2, ty1), (105, 225, 255), 1, cv2.LINE_AA)
-                cv2.putText(preview, code_lbl, (tx + 9, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (230, 248, 255), 1, cv2.LINE_AA)
+                cv2.putText(preview, code_lbl, (tx + 8, ty0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.39, (230, 248, 255), 1, cv2.LINE_AA)
 
-        # 1. Loud warning banner (centered left of Effects drawer) if audio/BlackHole has ANY issue
+        # 1. Warning banner docked just above bottom bar so top pills/camera never overlap
         if warning:
-            avail = max(240, px0 - 30)
-            bw = min(avail, 820)
-            bx0 = 16 + (avail - bw) // 2
-            _blend_panel(preview, bx0, 52, bx0 + bw, 92, (28, 28, 200), 0.88)
-            cv2.rectangle(preview, (bx0, 52), (bx0 + bw, 92), (110, 110, 255), 2, cv2.LINE_AA)
+            bw = min(w - 40, 820)
+            bx0 = (w - bw) // 2
+            wy0, wy1 = h - 94, h - 58
+            _blend_panel(preview, bx0, wy0, bx0 + bw, wy1, (28, 28, 200), 0.90)
+            cv2.rectangle(preview, (bx0, wy0), (bx0 + bw, wy1), (110, 110, 255), 2, cv2.LINE_AA)
             cv2.putText(
                 preview,
                 f"! {_ascii(warning)}",
-                (bx0 + 16, 78),
+                (bx0 + 14, wy0 + 24),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.53,
+                0.48,
                 (255, 255, 255),
-                2,
+                1,
                 cv2.LINE_AA,
             )
 
@@ -174,6 +198,8 @@ class PreviewUI:
                 ("saber", "[1] 3D Lightsaber"),
                 ("face", "[2] Face Tracking"),
                 ("affection", "[3] Affection FX"),
+                ("games", "[4] 1v1 Games"),
+                ("mirror", "[5] Mirror Cam"),
             ]
             row_h = 34
             panel_y0 = py0 + 42
@@ -253,65 +279,18 @@ class PreviewUI:
                 cv2.line(preview, (px0 + 10, gy0 - 2), (px1 - 10, gy0 - 2), (65, 70, 82), 1)
                 h_cd = _ascii(str(game_info.get("her_code", game_info.get("room", "----"))))
                 y_cd = _ascii(str(game_info.get("host_code", "----")))
-                g_state = f"{h_cd}/{y_cd} ({game_info.get('players', 0)}p)"
+                p1_nm = _ascii(str(game_info.get("p1_name") or "P1"))[:8]
+                p2_nm = _ascii(str(game_info.get("p2_name") or "P2"))[:8]
                 cv2.putText(
                     preview,
-                    f"[q] QR: {g_state}",
+                    f"{p1_nm}: {h_cd} | {p2_nm}: {y_cd} ({game_info.get('players', 0)}/2)",
                     (px0 + 14, gy0 + 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.43,
-                    (110, 240, 255) if self.qr_open else (225, 210, 255),
+                    0.40,
+                    (110, 240, 255) if self.filters.get("games", True) else (165, 175, 195),
                     1,
                     cv2.LINE_AA,
                 )
-                self._hitboxes.append((px0 + 8, gy0, px1 - 8, gy1, "toggle_qr"))
-
-        # Side-by-side 2-Phone QR Invite card (preview only, never on virtual cam)
-        if game_info and self.qr_open and game_info.get("qr_bgr") is not None:
-            qr_g = game_info["qr_bgr"]
-            qr_h = game_info.get("qr_host_bgr")
-            qh, qw = qr_g.shape[:2]
-            pad_x = 18
-            gap_qr = 22 if qr_h is not None else 0
-            card_w = max(250, pad_x * 2 + qw + (qw + gap_qr if qr_h is not None else 0))
-            cx0, cy0 = 16, 138
-            cx1, cy1 = min(w - 290, cx0 + card_w), cy0 + qh + 96
-            _blend_panel(preview, cx0, cy0, cx1, cy1, (14, 22, 36), 0.92)
-            cv2.rectangle(preview, (cx0, cy0), (cx1, cy1), (110, 230, 255), 1, cv2.LINE_AA)
-            h_cd = _ascii(str(game_info.get("her_code", "")))
-            y_cd = _ascii(str(game_info.get("host_code", "")))
-            cv2.putText(
-                preview,
-                f"GITHUB 1V1 QR  |  HER: {h_cd}   YOU: {y_cd}",
-                (cx0 + 14, cy0 + 24),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.44,
-                (110, 235, 255),
-                1,
-                cv2.LINE_AA,
-            )
-            qy = cy0 + 48
-            qx_g = cx0 + pad_x
-            cv2.putText(preview, f"HER PHONE ({h_cd})", (qx_g, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (205, 165, 255), 1, cv2.LINE_AA)
-            if qy + qh < cy1 and qx_g + qw <= cx1:
-                preview[qy:qy + qh, qx_g:qx_g + qw] = qr_g
-            if qr_h is not None:
-                qh2, qw2 = qr_h.shape[:2]
-                qx_h = qx_g + qw + gap_qr
-                cv2.putText(preview, f"YOUR PHONE ({y_cd})", (qx_h, qy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (110, 240, 255), 1, cv2.LINE_AA)
-                if qy + qh2 < cy1 and qx_h + qw2 <= cx1:
-                    preview[qy:qy + qh2, qx_h:qx_h + qw2] = qr_h
-            url_short = _ascii(str(game_info.get("github_url") or game_info.get("url", "")))[:46]
-            cv2.putText(
-                preview,
-                f"{url_short}   ([q] hide)",
-                (cx0 + 14, cy1 - 14),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.38,
-                (210, 225, 240),
-                1,
-                cv2.LINE_AA,
-            )
 
         # 3. Bottom HUD bar with live MIC + BlackHole meters & telemetry
         bar_y0 = h - 54
@@ -326,12 +305,12 @@ class PreviewUI:
             mic_info = mic_info[:61] + "..."
         cv2.putText(preview, mic_info, (226, bar_y0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (190, 210, 230), 1, cv2.LINE_AA)
 
-        typing_game = bool(game_info and game_info.get("game") in ("word_duel", "rare_answer"))
+        typing_game = bool(game_info and self.filters.get("games", True) and game_info.get("game") in ("word_duel", "rare_answer"))
         hud_right = (
             f"saber {int(saber_ext * 100)}% ({blade_color}) | {frame_ms:.1f}ms | "
-            + ("1v1 on Phones | q QR | Q quit" if typing_game else "1-3 fx | c color | v hear | a mic | q QR | Q quit")
+            + ("1v1 on Phones | Q quit" if typing_game else "1-5 fx | g games | f mirror | c color | v hear | Q quit")
         )
-        cv2.putText(preview, hud_right, (226, bar_y0 + 43), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (220, 225, 235), 1, cv2.LINE_AA)
+        cv2.putText(preview, hud_right, (226, bar_y0 + 43), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (220, 225, 235), 1, cv2.LINE_AA)
 
     @staticmethod
     def _draw_meter(img: np.ndarray, x: int, y: int, bar_w: int, bar_h: int, label: str, norm: float, active: bool) -> None:

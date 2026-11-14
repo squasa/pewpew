@@ -932,7 +932,7 @@ class GameServer:
             self.cloud_status = "connected"
             self.cloud_broker = host
             self.cloud_error = None
-            print(f"[games] Cloud relay ready ({host}) -> squasa.github.io/pewpew | HER: {self.her_code} | YOU: {self.host_code}")
+            print(f"[games] Cloud relay ready ({host}) -> squasa.github.io/pewpew | P1: {self.her_code} | P2: {self.host_code}")
             if self._cloud_wake is not None:
                 self._cloud_wake.set()
 
@@ -1278,7 +1278,7 @@ class GameServer:
                         existing = None
                     else:
                         role = self._assign_role_locked(resolved_role)
-                        display_name = req_name or ("Her" if role == "guest" else ("Him" if role == "host" else "Viewer"))
+                        display_name = req_name or ("P1" if role == "guest" else ("P2" if role == "host" else "Viewer"))
                         existing = ConnectedClient(
                             client_id=cid,
                             role=role,
@@ -1390,7 +1390,7 @@ class GameServer:
             expired = self._prune_stale_cloud_locked(time.monotonic())
             role = self._assign_role_locked(resolved_role)
             client_id = secrets.token_hex(6)
-            display_name = req_name or ("Her" if role == "guest" else ("Him" if role == "host" else "Viewer"))
+            display_name = req_name or ("P1" if role == "guest" else ("P2" if role == "host" else "Viewer"))
             client = ConnectedClient(client_id=client_id, role=role, name=display_name, writer=writer)
             self._clients[client_id] = client
 

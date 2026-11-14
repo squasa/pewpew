@@ -76,6 +76,7 @@ class GamesEngine:
         self.host_text_buf: str = ""
         self.host_text_err: str = ""
         self._last_webcam_action: float = 0.0
+        self._cam_jpg: str = ""
 
         if server is not None:
             server.set_handlers(
@@ -94,6 +95,11 @@ class GamesEngine:
             if self.active_game in ("face_darts", "mouth_catch", "rare_answer"):
                 return True
         return self.bus.has_face_fx()
+
+    def set_cam_frame(self, jpg_b64: str) -> None:
+        with self._lock:
+            self._cam_jpg = jpg_b64
+            self._dirty = True
 
     def reload_krillion_assets(self) -> None:
         with self._lock:
@@ -737,6 +743,8 @@ class GamesEngine:
                 face_info["faceScale"] = round(float(fs.face_scale_px) / 1280.0, 4)
                 face_info["nose"] = [round(fs.nose_px[0] / 1280.0, 3), round(fs.nose_px[1] / 720.0, 3)]
                 face_info["mouth"] = [round(fs.mouth_px[0] / 1280.0, 3), round(fs.mouth_px[1] / 720.0, 3)]
+            if self.active_game in ("mouth_catch", "face_darts") and self._cam_jpg:
+                face_info["jpg"] = self._cam_jpg
 
             payload = {
                 "type": "state",

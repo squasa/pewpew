@@ -163,6 +163,10 @@ class EffectBus:
             if len(self._stuck_darts) > 12:
                 self._stuck_darts = self._stuck_darts[-12:]
 
+    def get_stuck_darts(self) -> list[StuckDart]:
+        with self._lock:
+            return list(self._stuck_darts)
+
     def add_food_splat(
         self,
         dx_norm: float,
@@ -382,37 +386,8 @@ class EffectBus:
         return fallback[0], fallback[1], 145.0
 
     def _draw_stuck_dart(self, frame: np.ndarray, d: StuckDart, face_state, now: float, w: int, h: int) -> None:
-        age = now - d.created
-        cx, cy, sc = self._anchor_px(d.dx_norm, d.dy_norm, d.fallback_xy, face_state)
-        cy += d.fall_y
-        if cy > h + 80:
-            return
-        wobble = math.sin(age * 38.0) * math.exp(-age * 6.5) * 14.0
-        ang = math.radians(d.angle_deg + wobble - 35.0)
-        stick_len = max(28.0, sc * 0.42)
-        tx = int(cx + math.cos(ang) * stick_len)
-        ty = int(cy + math.sin(ang) * stick_len)
-        ix, iy = int(cx), int(cy)
-        # Suction cup disc
-        cv2.circle(frame, (ix, iy), max(6, int(sc * 0.065)), (35, 35, 45), -1, cv2.LINE_AA)
-        cv2.circle(frame, (ix, iy), max(4, int(sc * 0.045)), (90, 90, 110), 1, cv2.LINE_AA)
-        # Foam shaft
-        cv2.line(frame, (ix, iy), (tx, ty), (20, 20, 24), max(7, int(sc * 0.055)), cv2.LINE_AA)
-        cv2.line(frame, (ix, iy), (tx, ty), d.color_bgr, max(5, int(sc * 0.04)), cv2.LINE_AA)
-        # Tail fins
-        perp_x = -math.sin(ang) * max(7.0, sc * 0.08)
-        perp_y = math.cos(ang) * max(7.0, sc * 0.08)
-        back_x = tx - math.cos(ang) * 10.0
-        back_y = ty - math.sin(ang) * 10.0
-        fin_pts = np.array(
-            [
-                [tx + int(perp_x), ty + int(perp_y)],
-                [tx - int(perp_x), ty - int(perp_y)],
-                [int(back_x), int(back_y)],
-            ],
-            dtype=np.int32,
-        )
-        cv2.fillConvexPoly(frame, fin_pts, (250, 245, 235), cv2.LINE_AA)
+        # Stuck suction darts are rendered in full 3D by GamesAR3DRenderer so no flat 2D sprite overlaps.
+        return
 
     def _draw_splat(self, frame: np.ndarray, s: FoodSplat, face_state, now: float, w: int, h: int) -> None:
         age = now - s.created
@@ -442,35 +417,8 @@ class EffectBus:
         cv2.addWeighted(overlay, alpha, roi, 1.0 - alpha, 0.0, dst=roi)
 
     def _draw_flying(self, frame: np.ndarray, f: FlyingSprite, w: int, h: int) -> None:
-        z = max(0.0, min(1.0, f.z))
-        scale = 0.28 + (1.0 - z) * 0.95
-        ix = int(f.x * w)
-        iy = int(f.y * h)
-        r = max(8, int(28 * scale))
-        if f.kind == "dart":
-            cv2.circle(frame, (ix, iy), r, (25, 25, 35), -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), max(4, int(r * 0.72)), f.color_bgr, -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), max(2, int(r * 0.30)), (255, 245, 240), -1, cv2.LINE_AA)
-            return
-        if f.kind == "donut":
-            cv2.circle(frame, (ix, iy), r, (105, 165, 215), -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), max(5, int(r * 0.84)), (185, 110, 255), -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), max(3, int(r * 0.34)), (40, 35, 35), -1, cv2.LINE_AA)
-        elif f.kind == "taco":
-            pts = np.array([[ix - r, iy + r // 3], [ix, iy - r], [ix + r, iy + r // 3]], dtype=np.int32)
-            cv2.fillConvexPoly(frame, pts, (80, 210, 245), cv2.LINE_AA)
-            cv2.line(frame, (ix - int(r * 0.7), iy), (ix + int(r * 0.7), iy), (85, 200, 95), max(2, r // 4), cv2.LINE_AA)
-        elif f.kind == "burger":
-            cv2.ellipse(frame, (ix, iy - r // 4), (r, r // 2), 0, 180, 360, (85, 170, 235), -1, cv2.LINE_AA)
-            cv2.rectangle(frame, (ix - r, iy - r // 6), (ix + r, iy + r // 4), (45, 70, 125), -1)
-            cv2.ellipse(frame, (ix, iy + r // 3), (r, r // 3), 0, 0, 180, (95, 175, 235), -1, cv2.LINE_AA)
-        elif f.kind == "sushi":
-            cv2.circle(frame, (ix, iy), r, (245, 245, 248), -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), r, (30, 45, 35), max(2, r // 5), cv2.LINE_AA)
-            cv2.circle(frame, (ix, iy), max(3, r // 2), (90, 130, 255), -1, cv2.LINE_AA)
-        else:  # berry / default
-            cv2.circle(frame, (ix, iy), r, (145, 55, 225), -1, cv2.LINE_AA)
-            cv2.circle(frame, (ix - r // 3, iy - r // 3), max(2, r // 5), (235, 210, 255), -1, cv2.LINE_AA)
+        # All flying projectiles (darts, donuts) are rendered in 3D by GamesAR3DRenderer.
+        return
 
     def _draw_forfeit(self, frame: np.ndarray, kind: str, face_state, now: float, w: int, h: int) -> None:
         if face_state is not None:
@@ -654,11 +602,25 @@ class EffectBus:
         your_code = self._hud_ascii(str(state.get("yourCode") or ""))
         cloud_st = str(state.get("cloudStatus") or "")
         roles_here = {str(p.get("role", "")) for p in state.get("players", [])}
+        p_names = {
+            str(p.get("role", "")): self._hud_ascii(str(p.get("name") or "")).strip()
+            for p in state.get("players", [])
+        }
+        p1_name = (p_names.get("guest") or "P1")[:12]
+        p2_name = (p_names.get("host") or "P2")[:12]
+
+        def _fmt_names(s: str) -> str:
+            out = self._hud_ascii(s)
+            if p1_name != "P1" and p1_name not in out:
+                out = out.replace("P1", p1_name)
+            if p2_name != "P2" and p2_name not in out:
+                out = out.replace("P2", p2_name)
+            return out
 
         if g == "lobby":
             if not her_code and not your_code:
                 return
-            ly0, ly1 = 56, 128
+            ly0, ly1 = 48, 112
             # Keep all 3 pills cleanly left of Effects drawer (w - 284 on preview) on 1280px frames
             right_limit = min(w - 18, max(760, w - 302))
             avail_w = right_limit - 18
@@ -666,14 +628,15 @@ class EffectBus:
             side_w = min(286, max(195, int(avail_w * 0.285)))
             ctr_w = avail_w - side_w * 2 - gap * 2
 
-            # Left Pill: HER CODE (P1)
+            # Left Pill: P1 CODE
             lx0, lx1 = 18, 18 + side_w
             self._blend_box(frame, lx0, ly0, lx1, ly1, col=(16, 18, 34), alpha=0.86, border=(195, 145, 255))
-            cv2.putText(frame, "HER CODE (P1)", (lx0 + 12, ly0 + 21), font, 0.44, (205, 155, 255), 1, cv2.LINE_AA)
+            p1_lbl = f"P1: {p1_name.upper()}" if p1_name != "P1" else "P1 JOIN CODE"
+            cv2.putText(frame, p1_lbl[:15], (lx0 + 12, ly0 + 20), font, 0.42, (205, 155, 255), 1, cv2.LINE_AA)
             h_stat = "JOINED" if "guest" in roles_here else "OPEN"
             h_col = (80, 230, 110) if "guest" in roles_here else (195, 145, 255)
-            cv2.putText(frame, h_stat, (lx1 - 74, ly0 + 21), font, 0.39, h_col, 1, cv2.LINE_AA)
-            cv2.putText(frame, her_code or "----", (lx0 + 14, ly0 + 58), font, 1.02, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, h_stat, (lx1 - 74, ly0 + 20), font, 0.38, h_col, 1, cv2.LINE_AA)
+            cv2.putText(frame, her_code or "----", (lx0 + 14, ly0 + 54), font, 0.96, (255, 255, 255), 2, cv2.LINE_AA)
 
             # Center Pill: GitHub URL + Cloud Relay Status
             cx0 = lx1 + gap
@@ -682,22 +645,23 @@ class EffectBus:
             c_border = (110, 235, 255) if relay_ok else (85, 195, 240)
             self._blend_box(frame, cx0, ly0, cx1, ly1, col=(12, 18, 30), alpha=0.86, border=c_border)
             url_lbl = "squasa.github.io/pewpew"
-            (uw, _), _ = cv2.getTextSize(url_lbl, font, 0.56, 2)
-            cv2.putText(frame, url_lbl, (cx0 + max(10, (ctr_w - uw) // 2), ly0 + 28), font, 0.56, (110, 240, 255), 2, cv2.LINE_AA)
+            (uw, _), _ = cv2.getTextSize(url_lbl, font, 0.54, 2)
+            cv2.putText(frame, url_lbl, (cx0 + max(10, (ctr_w - uw) // 2), ly0 + 26), font, 0.54, (110, 240, 255), 2, cv2.LINE_AA)
             sub_lbl = "1V1 CLOUD READY - ENTER CODE ON PHONE" if relay_ok else f"1V1 RELAY: {(cloud_st or 'READY').upper()}"
-            (sw, _), _ = cv2.getTextSize(sub_lbl, font, 0.37, 1)
+            (sw, _), _ = cv2.getTextSize(sub_lbl, font, 0.36, 1)
             sub_col = (115, 245, 160) if relay_ok else (220, 230, 245)
-            cv2.putText(frame, sub_lbl, (cx0 + max(8, (ctr_w - sw) // 2), ly0 + 55), font, 0.37, sub_col, 1, cv2.LINE_AA)
+            cv2.putText(frame, sub_lbl, (cx0 + max(8, (ctr_w - sw) // 2), ly0 + 50), font, 0.36, sub_col, 1, cv2.LINE_AA)
 
-            # Right Pill: YOUR CODE (P2)
+            # Right Pill: P2 CODE
             rx0 = cx1 + gap
             rx1 = rx0 + side_w
             self._blend_box(frame, rx0, ly0, rx1, ly1, col=(12, 22, 34), alpha=0.86, border=(110, 240, 255))
-            cv2.putText(frame, "YOUR CODE (P2)", (rx0 + 12, ly0 + 21), font, 0.44, (110, 240, 255), 1, cv2.LINE_AA)
+            p2_lbl = f"P2: {p2_name.upper()}" if p2_name != "P2" else "P2 JOIN CODE"
+            cv2.putText(frame, p2_lbl[:15], (rx0 + 12, ly0 + 20), font, 0.42, (110, 240, 255), 1, cv2.LINE_AA)
             y_stat = "JOINED" if "host" in roles_here else "OPEN"
             y_col = (80, 230, 110) if "host" in roles_here else (110, 240, 255)
-            cv2.putText(frame, y_stat, (rx1 - 74, ly0 + 21), font, 0.39, y_col, 1, cv2.LINE_AA)
-            cv2.putText(frame, your_code or "----", (rx0 + 14, ly0 + 58), font, 1.02, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, y_stat, (rx1 - 74, ly0 + 20), font, 0.38, y_col, 1, cv2.LINE_AA)
+            cv2.putText(frame, your_code or "----", (rx0 + 14, ly0 + 54), font, 0.96, (255, 255, 255), 2, cv2.LINE_AA)
             return
 
         title_map = {
@@ -714,8 +678,8 @@ class EffectBus:
         center_col = (110, 235, 255)
         her_stat = "Ready"
         you_stat = "Ready"
-        her_badge = ("HER (P1)", (195, 145, 255), False)
-        you_badge = ("YOU (P2)", (110, 240, 255), False)
+        her_badge = (p1_name.upper(), (195, 145, 255), False)
+        you_badge = (p2_name.upper(), (110, 240, 255), False)
 
         if g == "pool":
             pm = state.get("pool", {})
@@ -725,11 +689,11 @@ class EffectBus:
             you_stat = f"Group: {hg}"
             if pm.get("phase") == "finished":
                 win = pm.get("winner")
-                center_sub = "YOU WIN!" if win == "host" else "HER WINS!"
+                center_sub = f"{p2_name.upper()} WINS!" if win == "host" else f"{p1_name.upper()} WINS!"
                 center_col = (115, 245, 160) if win == "host" else (205, 145, 255)
             else:
                 turn_g = pm.get("turn") == "guest"
-                center_sub = pm.get("status") or ("HER TURN" if turn_g else "YOUR TURN")
+                center_sub = _fmt_names(pm.get("status") or "") or (f"{p1_name.upper()}'S TURN" if turn_g else f"{p2_name.upper()}'S TURN")
                 center_col = (205, 145, 255) if turn_g else (110, 240, 255)
                 her_badge = ("SHOOTING" if turn_g else "WAITING", (80, 230, 110) if turn_g else (45, 215, 255), turn_g)
                 you_badge = ("SHOOTING" if not turn_g else "WAITING", (80, 230, 110) if not turn_g else (45, 215, 255), not turn_g)
@@ -740,12 +704,12 @@ class EffectBus:
             her_stat = f"Cups Left: {g_alive}"
             you_stat = f"Cups Left: {h_alive}"
             if bp.get("phase") == "finished":
-                center_sub = "YOU WIN!" if bp.get("winner") == "host" else "HER WINS!"
+                center_sub = f"{p2_name.upper()} WINS!" if bp.get("winner") == "host" else f"{p1_name.upper()} WINS!"
                 center_col = (115, 245, 160) if bp.get("winner") == "host" else (205, 145, 255)
             else:
                 turn_g = bp.get("turn") == "guest"
                 shots_left = bp.get("shotsLeft", 3)
-                center_sub = bp.get("status") or (f"{'HER' if turn_g else 'YOUR'} TURN ({shots_left} shots)")
+                center_sub = _fmt_names(bp.get("status") or "") or (f"{p1_name if turn_g else p2_name}'s turn ({shots_left} shots)")
                 her_badge = (f"{shots_left} SHOTS" if turn_g else "DEFEND", (80, 230, 110) if turn_g else (45, 215, 255), turn_g)
                 you_badge = (f"{shots_left} SHOTS" if not turn_g else "SWAT OK", (80, 230, 110) if not turn_g else (45, 215, 255), not turn_g)
         elif g == "classic_darts":
@@ -754,12 +718,12 @@ class EffectBus:
             her_stat = f"Score: {sc.get('guest', 301)}"
             you_stat = f"Score: {sc.get('host', 301)}"
             if cd.get("phase") == "finished":
-                center_sub = "YOU WIN!" if cd.get("winner") == "host" else "HER WINS!"
+                center_sub = f"{p2_name.upper()} WINS!" if cd.get("winner") == "host" else f"{p1_name.upper()} WINS!"
                 center_col = (115, 245, 160) if cd.get("winner") == "host" else (205, 145, 255)
             else:
                 turn_g = cd.get("turn") == "guest"
                 d_left = cd.get("dartsLeft", 3)
-                center_sub = cd.get("status") or (f"{'HER' if turn_g else 'YOUR'} TURN ({d_left} darts)")
+                center_sub = _fmt_names(cd.get("status") or "") or (f"{p1_name if turn_g else p2_name}'s turn ({d_left} darts)")
                 her_badge = (f"{d_left} DARTS" if turn_g else "WAIT", (80, 230, 110) if turn_g else (45, 215, 255), turn_g)
                 you_badge = (f"{d_left} DARTS" if not turn_g else "WAIT", (80, 230, 110) if not turn_g else (45, 215, 255), not turn_g)
         elif g == "face_darts":
@@ -786,7 +750,8 @@ class EffectBus:
             you_stat = f"Guesses: {you_rows}/6"
             if wd.get("phase") == "finished":
                 win = wd.get("winner")
-                center_sub = f"{'YOU WIN' if win == 'host' else ('DRAW' if win == 'draw' else 'HER WINS')} ({wd.get('target') or ''})"
+                win_txt = f"{p2_name.upper()} WINS" if win == "host" else ("DRAW" if win == "draw" else f"{p1_name.upper()} WINS")
+                center_sub = f"{win_txt} ({wd.get('target') or ''})"
                 center_col = (115, 245, 160) if win == "host" else (205, 145, 255)
                 her_badge = ("WIN" if win == "guest" else "DONE", (80, 230, 110) if win == "guest" else (120, 130, 150), False)
                 you_badge = ("WIN" if win == "host" else "DONE", (80, 230, 110) if win == "host" else (120, 130, 150), False)
@@ -807,72 +772,71 @@ class EffectBus:
             her_badge = ("LOCKED" if her_lk else "THINKING...", (80, 230, 110) if her_lk else (45, 215, 255), her_lk)
             you_badge = ("LOCKED" if you_lk else "THINKING...", (80, 230, 110) if you_lk else (45, 215, 255), you_lk)
 
-        # 1. Side-by-side 1v1 Broadcast Pills (Left: HER P1 | Center: Title | Right: YOU P2)
-        py0, py1 = 52, 110
+        # 1. Side-by-side 1v1 Broadcast Pills (Left: P1 | Center: Title | Right: P2)
+        py0, py1 = 46, 94
         pill_w = min(272, (w - 400) // 2)
-        # Left Pill (HER P1)
+        # Left Pill (P1)
         lx0, lx1 = 18, 18 + pill_w
         self._blend_box(frame, lx0, py0, lx1, py1, col=(16, 18, 34), alpha=0.84, border=(195, 145, 255))
-        her_hdr = f"HER (P1) #{her_code}" if her_code else "HER (P1)"
-        cv2.putText(frame, her_hdr, (lx0 + 12, py0 + 22), font, 0.45, (205, 155, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, self._hud_ascii(her_stat)[:26], (lx0 + 12, py0 + 46), font, 0.42, (232, 238, 248), 1, cv2.LINE_AA)
+        her_hdr = f"{p1_name} #{her_code}" if her_code else p1_name
+        cv2.putText(frame, her_hdr[:16], (lx0 + 12, py0 + 20), font, 0.43, (205, 155, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, self._hud_ascii(her_stat)[:26], (lx0 + 12, py0 + 40), font, 0.40, (232, 238, 248), 1, cv2.LINE_AA)
         hb_txt, hb_col, _ = her_badge
-        cv2.putText(frame, hb_txt, (lx1 - 102, py0 + 22), font, 0.39, hb_col, 1, cv2.LINE_AA)
+        cv2.putText(frame, hb_txt, (lx1 - 100, py0 + 20), font, 0.37, hb_col, 1, cv2.LINE_AA)
 
         # Center Game Banner (compact so center face below stays wide open)
         cw = min(356, w - pill_w * 2 - 72)
         cx0 = (w - cw) // 2
         cx1 = cx0 + cw
-        c_lines = self._wrap_text(center_sub, cw - 20, 0.40, 1, max_lines=2)
-        c_y1 = py0 + (58 if len(c_lines) <= 1 else 72)
+        c_lines = self._wrap_text(center_sub, cw - 20, 0.38, 1, max_lines=2)
+        c_y1 = py0 + (48 if len(c_lines) <= 1 else 66)
         self._blend_box(frame, cx0, py0, cx1, c_y1, col=(12, 18, 30), alpha=0.84, border=center_col)
-        (tw, _), _ = cv2.getTextSize(title, font, 0.48, 2)
-        cv2.putText(frame, title, (cx0 + max(10, (cw - tw) // 2), py0 + 22), font, 0.48, center_col, 2, cv2.LINE_AA)
+        (tw, _), _ = cv2.getTextSize(title, font, 0.46, 2)
+        cv2.putText(frame, title, (cx0 + max(10, (cw - tw) // 2), py0 + 20), font, 0.46, center_col, 2, cv2.LINE_AA)
         for i_l, cl in enumerate(c_lines):
-            (clw, _), _ = cv2.getTextSize(cl, font, 0.40, 1)
-            cv2.putText(frame, cl, (cx0 + max(8, (cw - clw) // 2), py0 + 44 + i_l * 17), font, 0.40, (225, 236, 248), 1, cv2.LINE_AA)
+            (clw, _), _ = cv2.getTextSize(cl, font, 0.38, 1)
+            cv2.putText(frame, cl, (cx0 + max(8, (cw - clw) // 2), py0 + 40 + i_l * 16), font, 0.38, (225, 236, 248), 1, cv2.LINE_AA)
 
-        # Right Pill (YOU P2)
+        # Right Pill (P2)
         rx1 = w - 18
         rx0 = rx1 - pill_w
         self._blend_box(frame, rx0, py0, rx1, py1, col=(12, 22, 34), alpha=0.84, border=(110, 240, 255))
-        you_hdr = f"YOU (P2) #{your_code}" if your_code else "YOU (P2)"
-        cv2.putText(frame, you_hdr, (rx0 + 12, py0 + 22), font, 0.45, (110, 240, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, self._hud_ascii(you_stat)[:26], (rx0 + 12, py0 + 46), font, 0.42, (232, 238, 248), 1, cv2.LINE_AA)
+        you_hdr = f"{p2_name} #{your_code}" if your_code else p2_name
+        cv2.putText(frame, you_hdr[:16], (rx0 + 12, py0 + 20), font, 0.43, (110, 240, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, self._hud_ascii(you_stat)[:26], (rx0 + 12, py0 + 40), font, 0.40, (232, 238, 248), 1, cv2.LINE_AA)
         yb_txt, yb_col, _ = you_badge
-        cv2.putText(frame, yb_txt, (rx1 - 102, py0 + 22), font, 0.39, yb_col, 1, cv2.LINE_AA)
+        cv2.putText(frame, yb_txt, (rx1 - 100, py0 + 20), font, 0.37, yb_col, 1, cv2.LINE_AA)
 
         if (her_code or your_code) and len(roles_here) < 2:
-            fy0, fy1 = h - 84, h - 58
-            f_txt = f"squasa.github.io/pewpew | HER {her_code} | YOU {your_code}"
-            (fw, _), _ = cv2.getTextSize(f_txt, font, 0.39, 1)
+            fy0, fy1 = h - 88, h - 62
+            f_txt = f"squasa.github.io/pewpew | {p1_name}: {her_code} | {p2_name}: {your_code}"
+            (fw, _), _ = cv2.getTextSize(f_txt, font, 0.38, 1)
             fx1 = min(w - 18, 18 + fw + 24)
             self._blend_box(frame, 18, fy0, fx1, fy1, col=(12, 18, 30), alpha=0.78, border=(90, 155, 200))
-            cv2.putText(frame, f_txt, (30, fy0 + 18), font, 0.39, (215, 236, 252), 1, cv2.LINE_AA)
+            cv2.putText(frame, f_txt, (30, fy0 + 18), font, 0.38, (215, 236, 252), 1, cv2.LINE_AA)
 
-        # 2. Live Green -> Yellow -> Red Power & Aim Meter on left rail (Pool / Cup Pong / Darts)
+        # 2. Live Green -> Yellow -> Red Power & Aim Meter on left rail
         aim = state.get("liveAim") or state.get("webcamAim")
-        if aim and aim.get("game", aim.get("kind")) in ("pool", "beer_pong", "classic_darts"):
+        if aim and aim.get("game", aim.get("kind")) in ("pool", "beer_pong", "classic_darts", "face_darts", "mouth_catch"):
             pwr = max(0.0, min(1.0, float(aim.get("power", 0.0))))
             pcol = self._power_color_bgr(pwr)
-            by_who = "YOU AIMING (P2)" if aim.get("by", "host") == "host" else "HER AIMING (P1)"
-            gy0 = py1 + 12
-            gx0, gx1, gy1 = 18, 326, gy0 + 54
+            by_who = f"{p2_name.upper()} AIMING" if aim.get("by", "host") == "host" else f"{p1_name.upper()} AIMING"
+            gy0 = py1 + 10
+            gx0, gx1, gy1 = 18, 316, gy0 + 52
             self._blend_box(frame, gx0, gy0, gx1, gy1, col=(12, 18, 30), alpha=0.84, border=pcol)
             zone_lbl = "SWEET SPOT" if 0.35 <= pwr <= 0.75 else ("MAX POWER" if pwr > 0.75 else "SOFT")
-            cv2.putText(frame, f"{by_who} | {int(round(pwr * 100))}% ({zone_lbl})", (gx0 + 10, gy0 + 20), font, 0.41, pcol, 1, cv2.LINE_AA)
+            cv2.putText(frame, f"{by_who[:14]} | {int(round(pwr * 100))}% ({zone_lbl})", (gx0 + 10, gy0 + 19), font, 0.39, pcol, 1, cv2.LINE_AA)
             bar_x0, bar_x1 = gx0 + 10, gx1 - 12
-            bar_y0, bar_y1 = gy0 + 30, gy0 + 43
+            bar_y0, bar_y1 = gy0 + 29, gy0 + 42
             cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x1, bar_y1), (32, 42, 58), -1)
             fill_w = int((bar_x1 - bar_x0) * pwr)
             if fill_w > 0:
                 cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x0 + fill_w, bar_y1), pcol, -1)
             cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x1, bar_y1), (130, 150, 175), 1)
 
-        # 3. Word Duel: Side-by-Side Flanked Left & Right 5x6 Green/Yellow/Gray Progress Grids (face open in center!)
+        # 3. Word Duel: Side-by-Side Flanked Left & Right 5x6 Green/Yellow/Gray Progress Grids (NO letters shown!)
         if g == "word_duel":
             wd = state.get("word_duel", {})
-            finished = wd.get("phase") == "finished"
             boards = wd.get("boards", {})
             buf_len = len(str(state.get("hostTextBuf", ""))[:5])
             tcols = {
@@ -882,15 +846,15 @@ class EffectBus:
             }
             tile_s, gap = 28, 4
             card_grid_w = 182
-            py_grid = h - 252
-            for side_idx, (role_k, label, col_lbl, gx_box) in enumerate([
-                ("guest", "HER BOARD (P1)", (195, 145, 255), 18),
-                ("host", "YOUR BOARD (P2)", (110, 240, 255), w - 18 - card_grid_w),
-            ]):
+            py_grid = h - 306
+            for role_k, label, col_lbl, gx_box in [
+                ("guest", f"{p1_name.upper()[:10]} (P1)", (195, 145, 255), 18),
+                ("host", f"{p2_name.upper()[:10]} (P2)", (110, 240, 255), w - 18 - card_grid_w),
+            ]:
                 board = boards.get(role_k, {})
                 rows = board.get("rows", [])
                 self._blend_box(frame, gx_box, py_grid, gx_box + card_grid_w, py_grid + 236, col=(10, 16, 28), alpha=0.84, border=col_lbl)
-                cv2.putText(frame, label, (gx_box + 12, py_grid + 20), font, 0.43, col_lbl, 2, cv2.LINE_AA)
+                cv2.putText(frame, label, (gx_box + 12, py_grid + 20), font, 0.42, col_lbl, 2, cv2.LINE_AA)
                 gx0 = gx_box + 13
                 grid_y0 = py_grid + 30
                 for r in range(6):
@@ -901,20 +865,15 @@ class EffectBus:
                         rx = gx0 + c * (tile_s + gap)
                         bg = (28, 36, 52)
                         bd = (72, 90, 118)
-                        ch = ""
                         if done_row is not None:
                             bg = tcols.get(done_row["states"][c], bg)
                             bd = bg
-                            if finished and done_row.get("word"):
-                                ch = done_row["word"][c]
                         elif role_k == "host" and is_cur and c < buf_len:
                             bg = (36, 58, 86)
                             bd = (45, 215, 255)
                         cv2.rectangle(frame, (rx, ry), (rx + tile_s, ry + tile_s), bg, -1)
                         cv2.rectangle(frame, (rx, ry), (rx + tile_s, ry + tile_s), bd, 1, cv2.LINE_AA)
-                        if ch:
-                            cv2.putText(frame, ch, (rx + 7, ry + 21), font, 0.56, (245, 250, 255), 2, cv2.LINE_AA)
-                        elif role_k == "host" and is_cur and c < buf_len:
+                        if role_k == "host" and is_cur and c < buf_len and done_row is None:
                             cv2.circle(frame, (rx + tile_s // 2, ry + tile_s // 2), 4, (45, 220, 255), -1, cv2.LINE_AA)
 
         # 4. Krillion 1v1 Jinx: Auto-Wrapped Multi-Line Prompt + Green/Yellow Side-by-Side Status Pills
@@ -926,46 +885,46 @@ class EffectBus:
             card_w = min(800, w - 60)
             bx0 = (w - card_w) // 2
             bx1 = bx0 + card_w
-            prompt_lines = self._wrap_text(kr.get("prompt", ""), card_w - 40, 0.55, 2, max_lines=3)
-            card_h = 108 + max(1, len(prompt_lines)) * 26
-            by1 = h - 18
+            prompt_lines = self._wrap_text(kr.get("prompt", ""), card_w - 40, 0.52, 2, max_lines=3)
+            card_h = 92 + max(1, len(prompt_lines)) * 24
+            by1 = h - 62
             by0 = by1 - card_h
             self._blend_box(frame, bx0, by0, bx1, by1, col=(10, 18, 32), alpha=0.85, border=(108, 229, 255))
 
             if phase == "idle":
-                cv2.putText(frame, "KRILLION 1v1 JINX (SIDE-BY-SIDE ON PHONES)", (bx0 + 22, by0 + 42), font, 0.56, (110, 235, 255), 2, cv2.LINE_AA)
-                cv2.putText(frame, "Tap Start Dive on either phone to plunge!", (bx0 + 22, by0 + 82), font, 0.48, (220, 234, 248), 1, cv2.LINE_AA)
+                cv2.putText(frame, "KRILLION 1v1 JINX (SIDE-BY-SIDE ON PHONES)", (bx0 + 22, by0 + 38), font, 0.54, (110, 235, 255), 2, cv2.LINE_AA)
+                cv2.putText(frame, "Tap Start Dive on either phone to plunge!", (bx0 + 22, by0 + 74), font, 0.46, (220, 234, 248), 1, cv2.LINE_AA)
             elif phase == "preview":
                 sec = max(1, int(math.ceil(float(kr.get("timer", 3.0)))))
-                cv2.putText(frame, f"QUESTION IN {sec}s - GET READY", (bx0 + 22, by0 + 30), font, 0.50, (100, 235, 255), 2, cv2.LINE_AA)
-                py = by0 + 62
+                cv2.putText(frame, f"QUESTION IN {sec}s - GET READY", (bx0 + 22, by0 + 28), font, 0.48, (100, 235, 255), 2, cv2.LINE_AA)
+                py = by0 + 56
                 for pl in prompt_lines:
-                    cv2.putText(frame, pl, (bx0 + 22, py), font, 0.55, (245, 250, 255), 2, cv2.LINE_AA)
-                    py += 26
+                    cv2.putText(frame, pl, (bx0 + 22, py), font, 0.52, (245, 250, 255), 2, cv2.LINE_AA)
+                    py += 24
             elif phase == "answering":
                 sec = max(0, int(math.ceil(float(kr.get("timer", 0.0)))))
-                cv2.putText(frame, f"Q{int(kr.get('roundIdx', 0)) + 1}/{kr.get('totalRounds', 5)}  ({sec}s left)", (bx0 + 20, by0 + 26), font, 0.47, (110, 235, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"Q{int(kr.get('roundIdx', 0)) + 1}/{kr.get('totalRounds', 5)}  ({sec}s left)", (bx0 + 20, by0 + 24), font, 0.45, (110, 235, 255), 1, cv2.LINE_AA)
                 for p_lbl, is_lk, px_start in [
-                    ("HER", her_locked, bx1 - 375),
-                    ("YOU", you_locked, bx1 - 190),
+                    (p1_name[:9], her_locked, bx1 - 375),
+                    (p2_name[:9], you_locked, bx1 - 190),
                 ]:
                     pcol = (80, 225, 85) if is_lk else (45, 215, 255)
-                    ptxt = f"{p_lbl}: {'LOCKED' if is_lk else 'THINKING...'}"
-                    self._blend_box(frame, px_start, by0 + 8, px_start + 172, by0 + 32, col=(20, 48, 32) if is_lk else (42, 42, 18), alpha=0.88, border=pcol)
-                    cv2.putText(frame, ptxt, (px_start + 10, by0 + 25), font, 0.41, pcol, 1, cv2.LINE_AA)
+                    ptxt = f"{p_lbl}: {'LOCKED' if is_lk else 'THINKING'}"
+                    self._blend_box(frame, px_start, by0 + 6, px_start + 174, by0 + 30, col=(20, 48, 32) if is_lk else (42, 42, 18), alpha=0.88, border=pcol)
+                    cv2.putText(frame, ptxt[:18], (px_start + 8, by0 + 23), font, 0.39, pcol, 1, cv2.LINE_AA)
 
-                py = by0 + 58
+                py = by0 + 54
                 for pl in prompt_lines:
-                    cv2.putText(frame, pl, (bx0 + 20, py), font, 0.55, (245, 250, 255), 2, cv2.LINE_AA)
-                    py += 26
+                    cv2.putText(frame, pl, (bx0 + 20, py), font, 0.52, (245, 250, 255), 2, cv2.LINE_AA)
+                    py += 24
 
                 foot_col = (80, 230, 85) if you_locked else (45, 215, 255)
                 foot_msg = (
-                    "YOU LOCKED IN! Waiting for Her phone..."
+                    f"{p2_name} LOCKED IN! Waiting for other player..."
                     if you_locked
                     else "1v1 Phones: Lock your rarest answer before timer ends!"
                 )
-                cv2.putText(frame, foot_msg, (bx0 + 20, by1 - 22), font, 0.46, foot_col, 1, cv2.LINE_AA)
+                cv2.putText(frame, foot_msg, (bx0 + 20, by1 - 18), font, 0.44, foot_col, 1, cv2.LINE_AA)
 
                 cam = state.get("cam", {})
                 if face_state is not None or cam.get("nose"):
@@ -985,15 +944,15 @@ class EffectBus:
                 g_row = last.get("guest", {})
                 h_row = last.get("host", {})
                 jinx_note = "JINX! SAME PICK (+5 each)" if last.get("jinx") else "1v1 REVEAL"
-                cv2.putText(frame, f"{jinx_note}  |  Deepest: {self._hud_ascii(last.get('sampleDeep', ''))[:32]}", (bx0 + 20, by0 + 28), font, 0.47, (100, 235, 255), 1, cv2.LINE_AA)
-                cv2.putText(frame, f"Her: {self._hud_ascii(g_row.get('canonical') or '--')} (+{g_row.get('pts', 0)})", (bx0 + 20, by0 + 62), font, 0.52, (190, 145, 255), 2, cv2.LINE_AA)
-                cv2.putText(frame, f"You: {self._hud_ascii(h_row.get('canonical') or '--')} (+{h_row.get('pts', 0)})", (bx0 + 20, by0 + 92), font, 0.52, (115, 240, 255), 2, cv2.LINE_AA)
-                cv2.putText(frame, "Tap Next Dive on phone for next question", (bx0 + 20, by1 - 14), font, 0.43, (195, 225, 245), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"{jinx_note}  |  Deepest: {self._hud_ascii(last.get('sampleDeep', ''))[:32]}", (bx0 + 20, by0 + 26), font, 0.45, (100, 235, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"{p1_name}: {self._hud_ascii(g_row.get('canonical') or '--')} (+{g_row.get('pts', 0)})", (bx0 + 20, by0 + 56), font, 0.50, (190, 145, 255), 2, cv2.LINE_AA)
+                cv2.putText(frame, f"{p2_name}: {self._hud_ascii(h_row.get('canonical') or '--')} (+{h_row.get('pts', 0)})", (bx0 + 20, by0 + 84), font, 0.50, (115, 240, 255), 2, cv2.LINE_AA)
+                cv2.putText(frame, "Tap Next Dive on phone for next question", (bx0 + 20, by1 - 12), font, 0.42, (195, 225, 245), 1, cv2.LINE_AA)
             elif phase == "surface":
                 tot = kr.get("totals", {})
-                cv2.putText(frame, f"FINAL 1v1 DIVE: You {tot.get('hostPts', 0)} pts vs Her {tot.get('guestPts', 0)} pts", (bx0 + 20, by0 + 48), font, 0.56, (110, 245, 190), 2, cv2.LINE_AA)
+                cv2.putText(frame, f"FINAL 1v1 DIVE: {p2_name} {tot.get('hostPts', 0)} pts vs {p1_name} {tot.get('guestPts', 0)} pts", (bx0 + 20, by0 + 44), font, 0.53, (110, 245, 190), 2, cv2.LINE_AA)
                 ff = kr.get("forfeit") or "none"
-                cv2.putText(frame, f"Forfeit: {ff.replace('_', ' ')} | Tap Rematch on phone!", (bx0 + 20, by0 + 90), font, 0.47, (225, 235, 248), 1, cv2.LINE_AA)
+                cv2.putText(frame, f"Forfeit: {ff.replace('_', ' ')} | Tap Rematch on phone!", (bx0 + 20, by0 + 82), font, 0.45, (225, 235, 248), 1, cv2.LINE_AA)
 
     def draw_host_private_hud(self, preview: np.ndarray, state: dict, now: float) -> None:
         """Render private local-only host typing HUD onto `preview` AFTER vcam.send()."""
@@ -1002,45 +961,8 @@ class EffectBus:
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         if g == "word_duel":
-            wd = state.get("word_duel", {})
-            board = wd.get("boards", {}).get("host", {})
-            rows = board.get("rows", [])
-            buf = self._hud_ascii(state.get("hostTextBuf", ""))[:5].upper()
-            err = self._hud_ascii(state.get("hostTextErr", ""))
-            if not buf and not err and not any(r.get("word") for r in rows):
-                return
-            card_grid_w = 182
-            gx_box = w - 18 - card_grid_w
-            py_grid = h - 252
-            gx0 = gx_box + 13
-            grid_y0 = py_grid + 30
-            tile_s, gap = 28, 4
-            tcols = {
-                "correct": (85, 195, 75),
-                "present": (45, 205, 245),
-                "absent": (58, 64, 76),
-            }
-            for r in range(6):
-                ry = grid_y0 + r * (tile_s + gap)
-                done_row = rows[r] if r < len(rows) else None
-                is_cur = (r == len(rows)) and not board.get("done")
-                for c in range(5):
-                    rx = gx0 + c * (tile_s + gap)
-                    ch = ""
-                    if done_row is not None and done_row.get("word"):
-                        ch = done_row["word"][c]
-                        bg = tcols.get(done_row["states"][c], (58, 64, 76))
-                        cv2.rectangle(preview, (rx + 1, ry + 1), (rx + tile_s - 1, ry + tile_s - 1), bg, -1)
-                    elif is_cur and c < len(buf):
-                        ch = buf[c]
-                        cv2.rectangle(preview, (rx + 1, ry + 1), (rx + tile_s - 1, ry + tile_s - 1), (42, 62, 92), -1)
-                    if ch:
-                        cv2.putText(preview, ch, (rx + 7, ry + 21), font, 0.56, (248, 252, 255), 2, cv2.LINE_AA)
-            if buf or err:
-                foot_txt = err if err else f"TYPE: {buf}_"
-                foot_col = (95, 130, 255) if err else (160, 235, 255)
-                self._blend_box(preview, gx_box, grid_y0 + 190, gx_box + card_grid_w, grid_y0 + 206, col=(14, 20, 32), alpha=0.90)
-                cv2.putText(preview, foot_txt[:22], (gx_box + 8, grid_y0 + 202), font, 0.37, foot_col, 1, cv2.LINE_AA)
+            # Never render guessed letters on webcam or local preview; tiles alone show Green/Yellow/Grey.
+            return
 
         elif g == "rare_answer":
             kr = state.get("rare_answer", {})
@@ -1048,16 +970,16 @@ class EffectBus:
                 card_w = min(800, w - 60)
                 bx0 = (w - card_w) // 2
                 bx1 = bx0 + card_w
-                prompt_lines = self._wrap_text(kr.get("prompt", ""), card_w - 40, 0.55, 2, max_lines=3)
-                card_h = 108 + max(1, len(prompt_lines)) * 26
-                by1 = h - 18
+                prompt_lines = self._wrap_text(kr.get("prompt", ""), card_w - 40, 0.52, 2, max_lines=3)
+                card_h = 92 + max(1, len(prompt_lines)) * 24
+                by1 = h - 62
                 by0 = by1 - card_h
                 buf = self._hud_ascii(state.get("hostTextBuf", ""))
                 err = self._hud_ascii(state.get("hostTextErr", ""))
-                self._blend_box(preview, bx0 + 18, by1 - 44, bx1 - 18, by1 - 8, col=(20, 32, 50), alpha=0.96, border=(108, 229, 255))
+                self._blend_box(preview, bx0 + 18, by1 - 40, bx1 - 18, by1 - 6, col=(20, 32, 50), alpha=0.96, border=(108, 229, 255))
                 shown = f"> {buf}_" if buf else "Type your private answer here & press ENTER..."
                 col = (250, 253, 255) if buf else (140, 175, 210)
-                cv2.putText(preview, shown[:68], (bx0 + 28, by1 - 21), font, 0.49, col, 1, cv2.LINE_AA)
+                cv2.putText(preview, shown[:68], (bx0 + 28, by1 - 17), font, 0.47, col, 1, cv2.LINE_AA)
                 if err:
                     self._blend_box(preview, bx0 + 18, by0 - 30, bx1 - 18, by0 - 4, col=(28, 30, 56), alpha=0.92, border=(80, 215, 255))
                     cv2.putText(preview, err[:76], (bx0 + 26, by0 - 11), font, 0.43, (110, 225, 255), 1, cv2.LINE_AA)

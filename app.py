@@ -16,6 +16,7 @@ Test:  .venv/bin/python app.py --selftest
 from __future__ import annotations
 
 import argparse
+import base64
 import math
 import sys
 import time
@@ -371,10 +372,10 @@ def run(
         games_engine = GamesEngine(DATA_DIR, WEB_DIR / "data", effect_bus, server=game_server)
         game_server.start()
         print(f"[games] Play URL (GitHub):     {game_server.github_url}")
-        print(f"[games] HER CODE (P1):         {game_server.her_code}")
-        print(f"[games] YOUR CODE (P2):        {game_server.host_code}")
+        print(f"[games] P1 Code:               {game_server.her_code}")
+        print(f"[games] P2 Code:               {game_server.host_code}")
         print(f"[games] Local LAN fallback:    {game_server.lan_url}")
-        print("[games] Both codes are shown on the webcam. Press 'q' anytime to toggle QR.")
+        print("[games] Both codes are shown on the webcam. Press 'g'/'4' for Games or 'f'/'5' to Mirror.")
         if game_server.tunnel_error:
             print(f"[games] Tunnel note: {game_server.tunnel_error}")
 
@@ -414,7 +415,7 @@ def run(
         now_m = time.monotonic()
         if event == cv2.EVENT_LBUTTONDOWN and ui.consume_click(x, y):
             return
-        if games_engine is not None:
+        if games_engine is not None and ui.filters.get("games", True):
             if event == cv2.EVENT_LBUTTONDOWN:
                 games_engine.handle_host_mouse("down", x / WIDTH, y / HEIGHT, now_m)
             elif event == cv2.EVENT_MOUSEMOVE:
@@ -424,12 +425,12 @@ def run(
 
     cv2.setMouseCallback("pewpew", on_window_mouse)
 
-    print("Effects ON/OFF toggles: [1] Lightsaber, [2] Face Track, [3] Affection | "
-          "[c] blade color | [m] menu | [q]/[g] QR code | [v] hear | [a] switch mic | Shift+Q quits.")
+    print("Effects ON/OFF toggles: [1] Lightsaber, [2] Face Track, [3] Affection, [4]/[g] 1v1 Games, [5]/[f] Mirror Cam | "
+          "[c] blade color | [m] menu | [v] hear | [a] switch mic | Shift+Q quits.")
     t0 = time.monotonic()
     prev = t0
     frame_ms_ema = 16.0
-    auto_closed_qr = False
+    last_cam_thumb = 0.0
 
     try:
         while True:
@@ -440,18 +441,33 @@ def run(
             now = time.monotonic()
             dt = min(now - prev, 0.1)
             prev = now
-            frame = cv2.flip(cv2.resize(frame, (WIDTH, HEIGHT)), 1)
+            frame = cv2.resize(frame, (WIDTH, HEIGHT))
+            if ui.filters.get("mirror", True):
+                frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             ts_ms = int((now - t0) * 1000)
+
+            if (
+                games_engine is not None
+                and ui.filters.get("games", True)
+                and games_engine.active_game in ("mouth_catch", "face_darts")
+                and (now - last_cam_thumb) >= 0.16
+            ):
+                thumb = cv2.resize(frame, (256, 144), interpolation=cv2.INTER_AREA)
+                ok_j, enc_j = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), 38])
+                if ok_j:
+                    games_engine.set_cam_frame(base64.b64encode(enc_j.tobytes()).decode("ascii"))
+                    last_cam_thumb = now
 
             saber_inputs: dict[str, tuple[list, list | None, str]] = {}
             occ_inputs: dict[str, list] = {}
             all_hands_lm: list[list[tuple[float, float]]] = []
             open_palms: list[tuple[float, float, float]] = []
+            games_on = ui.filters.get("games", True)
             need_hands = (
                 ui.filters["saber"]
                 or ui.filters["affection"]
-                or (games_engine is not None and games_engine.active_game in ("face_darts", "beer_pong", "pool", "classic_darts"))
+                or (games_on and games_engine is not None and games_engine.active_game in ("face_darts", "beer_pong", "pool", "classic_darts"))
             )
             if need_hands:
                 hres = hand_lm.detect_for_video(
@@ -556,12 +572,14 @@ def run(
 
             hud_snap = None
             if games_engine is not None:
-                games_engine.process_webcam_hands(all_hands_lm, now)
+                if ui.filters.get("games", True):
+                    games_engine.process_webcam_hands(all_hands_lm, now)
                 games_engine.step(dt, face_state, open_palms, WIDTH, HEIGHT)
-                games_ar3d.render(frame, games_engine, face_state, open_palms, now)
-                effect_bus.render(frame, face_state, dt)
-                hud_snap = games_engine.hud_state()
-                effect_bus.draw_game_hud(frame, hud_snap, now, face_state=face_state)
+                if ui.filters.get("games", True):
+                    games_ar3d.render(frame, games_engine, face_state, open_palms, now)
+                    effect_bus.render(frame, face_state, dt)
+                    hud_snap = games_engine.hud_state()
+                    effect_bus.draw_game_hud(frame, hud_snap, now, face_state=face_state)
             max_shake = max(sb.shake for sb in sabers.values())
             frame = apply_shake(frame, max_shake)
 
@@ -573,7 +591,7 @@ def run(
             frame_ms_ema = frame_ms_ema * 0.85 + frame_ms * 0.15
 
             preview = frame.copy()
-            if hud_snap is not None:
+            if hud_snap is not None and ui.filters.get("games", True):
                 effect_bus.draw_host_private_hud(preview, hud_snap, now)
             if ui.filters["face"] and face_tracker is not None:
                 face_tracker.draw_preview_debug(preview, face_state)
@@ -581,9 +599,8 @@ def run(
             game_info = None
             if game_server is not None and games_engine is not None:
                 p_cnt = game_server.active_counts()["total"]
-                if p_cnt >= 2 and not auto_closed_qr:
-                    ui.qr_open = False
-                    auto_closed_qr = True
+                snap_for_names = hud_snap if hud_snap is not None else games_engine.snapshot_for("host")
+                p_map = {str(p.get("role", "")): str(p.get("name", "")) for p in snap_for_names.get("players", [])}
                 game_info = {
                     "room": game_server.room_code,
                     "her_code": game_server.her_code,
@@ -591,9 +608,9 @@ def run(
                     "github_url": game_server.github_url,
                     "url": game_server.share_url,
                     "players": p_cnt,
+                    "p1_name": p_map.get("guest") or "P1",
+                    "p2_name": p_map.get("host") or "P2",
                     "game": games_engine.active_game,
-                    "qr_bgr": game_server.qr_bgr(148, "guest") if ui.qr_open else None,
-                    "qr_host_bgr": game_server.qr_bgr(148, "host") if ui.qr_open else None,
                 }
             gb, gg, gr = BLADE_COLORS[color_key]["glow_bgr"]
             swatch_bgr = (int(gb * 255), int(gg * 255), int(gr * 255))
@@ -615,8 +632,6 @@ def run(
             for act in ui.pop_actions():
                 if act == "toggle_menu":
                     ui.menu_open = not ui.menu_open
-                elif act == "toggle_qr":
-                    ui.qr_open = not ui.qr_open
                 elif act == "cycle_color":
                     color_idx = (color_idx + 1) % len(BLADE_COLOR_ORDER)
                 elif act == "cycle_monitor":
@@ -635,13 +650,13 @@ def run(
                 continue
             if key == ord("Q"):
                 break
-            if games_engine is not None and games_engine.wants_keyboard():
+            if games_engine is not None and ui.filters.get("games", True) and games_engine.wants_keyboard():
                 if games_engine.handle_host_key(key):
                     continue
-            if key == 27:
-                ui.qr_open = False
-            elif key in (ord("q"), ord("g")):
-                ui.qr_open = not ui.qr_open
+            if key in (ord("4"), ord("g"), ord("q")):
+                ui.toggle("games")
+            elif key in (ord("5"), ord("f")):
+                ui.toggle("mirror")
             elif key == ord("1"):
                 ui.toggle("saber")
             elif key == ord("2"):

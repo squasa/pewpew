@@ -132,7 +132,10 @@ export class WordDuelView {
       return `<div class="wd-mini-row" style="gap:3px;">${Array.from({ length: 5 }, (_, c) => `<div class="wd-mini-cell ${rr ? rr.states[c] : ""}" style="width:12px;height:12px;border-radius:3px;"></div>`).join("")}</div>`;
     }).join("")}</div>`;
 
-    const oppLabel = opp === "host" ? "Him (Webcam)" : "Her (Phone)";
+    const p1 = this.ws.playerName("guest");
+    const p2 = this.ws.playerName("host");
+    const esc = (s) => String(s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+    const oppLabel = esc(opp === "host" ? p2 : p1);
     const oppBadge = oppBoard.solved ? "✅ SOLVED" : (oppBoard.done ? "❌ DONE" : `${oppBoard.rows.length}/6`);
     const statusLine = wd.phase === "finished"
       ? `Target: ${wd.target} · ${wd.winner === role ? "YOU WIN! 🏆" : (wd.winner === "draw" ? "DRAW" : `${oppLabel.toUpperCase()} WINS`)}`
@@ -141,7 +144,7 @@ export class WordDuelView {
     this._container.innerHTML = `
       <div class="game-panel">
         <div class="hud-row">
-          <span style="font-weight:700;color:var(--accent-pink);">1V1 RACE · HER VS HIM</span>
+          <span style="font-weight:700;color:var(--accent-pink);">1V1 RACE · ${esc(p1.toUpperCase())} VS ${esc(p2.toUpperCase())}</span>
           <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text);">
             <div style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;">
               <strong style="color:var(--accent-cyan);">${oppLabel}</strong>

@@ -296,7 +296,7 @@ class MouthCatchMatch:
         if face_state is not None:
             sc = max(face_state.face_scale_px, 20.0)
             dist = math.hypot(px_x - face_state.mouth_px[0], px_y - face_state.mouth_px[1])
-            if dist <= sc * 0.50 and face_state.jaw_open > 0.28:
+            if dist <= sc * 0.36 and face_state.jaw_open > 0.28:
                 caught = True
 
         if caught:
@@ -368,7 +368,7 @@ class PoolMatch:
         self.phase: str = "aiming"  # "aiming" | "moving" | "ball_in_hand" | "finished"
         self.groups: dict[str, str | None] = {"guest": None, "host": None}
         self.winner: str | None = None
-        self.status_msg: str = "Her's turn — Break shot!"
+        self.status_msg: str = "P1's turn — Break shot!"
         self.practice_mode: bool = False
         self._first_contact: int | None = None
         self._potted_this_turn: list[int] = []
@@ -409,7 +409,7 @@ class PoolMatch:
         self.phase = "aiming"
         self.groups = {"guest": None, "host": None}
         self.winner = None
-        self.status_msg = "Her's turn — Break shot!"
+        self.status_msg = "P1's turn — Break shot!"
         self._first_contact = None
         self._potted_this_turn = []
         self._rail_hit = False
@@ -608,7 +608,7 @@ class PoolMatch:
             if cleared and not scratched:
                 self.winner = shooter
                 self.phase = "finished"
-                self.status_msg = f"{'Her' if shooter == 'guest' else 'Him'} sinks the 8-ball cleanly!"
+                self.status_msg = f"{'P1' if shooter == 'guest' else 'P2'} sinks the 8-ball cleanly!"
                 self._events.append({"kind": "pool_win", "winner": shooter})
             else:
                 self.winner = other
@@ -648,7 +648,7 @@ class PoolMatch:
             if not keep_turn:
                 self.turn = other
             self.phase = "aiming"
-            self.status_msg = f"{'Her' if self.turn == 'guest' else 'Him'}'s turn"
+            self.status_msg = f"{'P1' if self.turn == 'guest' else 'P2'}'s turn"
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -706,7 +706,7 @@ class BeerPongMatch:
         self.practice_mode: bool = False
         self.phase: str = "playing"  # "playing" | "redemption" | "finished"
         self.winner: str | None = None
-        self.status_msg: str = "Her's turn (3 shots — swipe fast!)"
+        self.status_msg: str = "P1's turn (3 shots — swipe fast!)"
         self.streaks: dict[str, int] = {"guest": 0, "host": 0}
         self.reracked: dict[str, bool] = {"guest": False, "host": False}
         self.racks: dict[str, list[dict[str, Any]]] = {"guest": [], "host": []}
@@ -740,7 +740,7 @@ class BeerPongMatch:
         self.shots_left = 3
         self.phase = "playing"
         self.winner = None
-        self.status_msg = "Her's turn (3 shots — swipe fast!)"
+        self.status_msg = "P1's turn (3 shots — swipe fast!)"
         self.streaks = {"guest": 0, "host": 0}
         self.reracked = {"guest": False, "host": False}
         self.balls.clear()
@@ -758,7 +758,7 @@ class BeerPongMatch:
         # Strict 1v1 only: always alternate between Her (guest) and Him (host)
         self.practice_mode = False
         if not self.balls:
-            self.status_msg = f"{'Her' if self.turn == 'guest' else 'Him'}'s turn ({self.shots_left} shots)"
+            self.status_msg = f"{'P1' if self.turn == 'guest' else 'P2'}'s turn ({self.shots_left} shots)"
 
     def rerack(self, role: str) -> bool:
         shooter = self.turn if self.practice_mode else role
@@ -1004,7 +1004,7 @@ class BeerPongMatch:
                 self.status_msg = "New round — 3 shots!"
             else:
                 self.turn = other
-                self.status_msg = f"{'Her' if self.turn == 'guest' else 'Him'}'s turn (3 shots)"
+                self.status_msg = f"{'P1' if self.turn == 'guest' else 'P2'}'s turn (3 shots)"
         else:
             s = "shot" if self.shots_left == 1 else "shots"
             self.status_msg = f"Miss — {self.shots_left} {s} left"
@@ -1055,7 +1055,7 @@ class ClassicDartsMatch:
         self.winner: str | None = None
         self.hits_this_turn: list[dict[str, Any]] = []
         self.last_throw: dict[str, Any] = {}
-        self.status_msg: str = "Her's turn — Throw dart 1"
+        self.status_msg: str = "P1's turn — Throw dart 1"
         self._events: list[dict[str, Any]] = []
 
     def pop_events(self) -> list[dict[str, Any]]:
@@ -1074,7 +1074,7 @@ class ClassicDartsMatch:
         self.winner = None
         self.hits_this_turn = []
         self.last_throw = {}
-        self.status_msg = "Her's turn — Throw dart 1"
+        self.status_msg = "P1's turn — Throw dart 1"
 
     @classmethod
     def score_coord(cls, nx: float, ny: float) -> tuple[int, str, bool]:
@@ -1138,7 +1138,7 @@ class ClassicDartsMatch:
         self.darts_left = 3
         self.turn_start_score = self.scores[self.turn]
         self.hits_this_turn = []
-        self.status_msg = f"{'Her' if self.turn == 'guest' else 'Him'}'s turn — 3 darts ({self.turn_start_score} left)"
+        self.status_msg = f"{'P1' if self.turn == 'guest' else 'P2'}'s turn — 3 darts ({self.turn_start_score} left)"
 
     def snapshot(self) -> dict[str, Any]:
         return {

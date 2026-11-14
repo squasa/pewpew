@@ -24,8 +24,8 @@ export const POOL_BALL_HEX = {
   15: "#872322",
 };
 
-export function createPubRenderer(canvas, { fov = 44, near = 0.05, far = 40, camPos = [0, 1.4, 2.2], lookAt = [0, 0, 0], ortho = false } = {}) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance", alpha: false });
+export function createPubRenderer(canvas, { fov = 44, near = 0.05, far = 40, camPos = [0, 1.4, 2.2], lookAt = [0, 0, 0], ortho = false, alpha = false } = {}) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance", alpha });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -33,8 +33,14 @@ export function createPubRenderer(canvas, { fov = 44, near = 0.05, far = 40, cam
   renderer.toneMappingExposure = 1.12;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#0d0b0a");
-  scene.fog = new THREE.FogExp2("#0d0b0a", ortho ? 0.0 : 0.085);
+  if (alpha) {
+    renderer.setClearColor(0x000000, 0);
+    scene.background = null;
+    scene.fog = null;
+  } else {
+    scene.background = new THREE.Color("#0d0b0a");
+    scene.fog = new THREE.FogExp2("#0d0b0a", ortho ? 0.0 : 0.085);
+  }
 
   const w = canvas.clientWidth || canvas.width || 540;
   const h = canvas.clientHeight || canvas.height || 360;
@@ -366,5 +372,74 @@ export function createDartMesh(flightHex = 0xf45d86) {
   const f2 = f1.clone();
   f2.rotation.z = Math.PI / 2;
   g.add(f1, f2);
+  return g;
+}
+
+export function createSuctionDartMesh(flightHex = 0xf45d86) {
+  const g = new THREE.Group();
+  // Flared rubber suction cup bell facing -Z
+  const cupPts = [
+    new THREE.Vector2(0.032, 0.0),
+    new THREE.Vector2(0.029, 0.008),
+    new THREE.Vector2(0.016, 0.022),
+    new THREE.Vector2(0.010, 0.034),
+    new THREE.Vector2(0.0, 0.034),
+  ];
+  const cupGeo = new THREE.LatheGeometry(cupPts, 24);
+  cupGeo.rotateX(Math.PI / 2);
+  const rubberMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1e2432,
+    roughness: 0.28,
+    clearcoat: 0.55,
+    side: THREE.DoubleSide,
+  });
+  const cup = new THREE.Mesh(cupGeo, rubberMat);
+  cup.position.z = -0.056;
+  g.add(cup);
+
+  const lip = new THREE.Mesh(
+    new THREE.TorusGeometry(0.030, 0.0042, 10, 24),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35 })
+  );
+  lip.position.z = -0.055;
+  g.add(lip);
+
+  // Chrome ferrule collar
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.011, 0.012, 0.016, 18),
+    new THREE.MeshStandardMaterial({ color: 0xd8e0ec, metalness: 0.9, roughness: 0.14 })
+  );
+  collar.rotation.x = Math.PI / 2;
+  collar.position.z = -0.016;
+  g.add(collar);
+
+  // Neon foam shaft body
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.0095, 0.0115, 0.088, 20),
+    new THREE.MeshStandardMaterial({ color: flightHex, roughness: 0.34, metalness: 0.08 })
+  );
+  shaft.rotation.x = Math.PI / 2;
+  shaft.position.z = 0.036;
+  shaft.castShadow = true;
+  g.add(shaft);
+
+  // Crossed swept tail fins
+  const finShape = new THREE.Shape();
+  finShape.moveTo(0, -0.009);
+  finShape.lineTo(0.034, -0.024);
+  finShape.lineTo(0.042, 0.024);
+  finShape.lineTo(0, 0.022);
+  finShape.closePath();
+  const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: 0.0025, bevelEnabled: false });
+  finGeo.center();
+  const finMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, emissive: flightHex, emissiveIntensity: 0.14 });
+  for (let i = 0; i < 4; i++) {
+    const fin = new THREE.Mesh(finGeo, finMat);
+    fin.rotation.y = Math.PI / 2;
+    fin.rotation.z = (i * Math.PI) / 2;
+    const ang = (i * Math.PI) / 2;
+    fin.position.set(Math.cos(ang) * 0.015, Math.sin(ang) * 0.015, 0.095);
+    g.add(fin);
+  }
   return g;
 }

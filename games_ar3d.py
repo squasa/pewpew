@@ -229,6 +229,8 @@ class GamesAR3DRenderer:
             "cup": self._upload(*_make_frustum(0.72, 1.0, 1.65, 24)),
             "box": self._upload(*_make_box()),
             "torus": self._upload(*_make_torus(1.0, 0.24, 24, 10)),
+            "donut_dough": self._upload(*_make_torus(0.78, 0.44, 32, 18)),
+            "donut_icing": self._upload(*_make_torus(0.78, 0.41, 32, 16)),
             "disc": self._upload(*_make_frustum(1.0, 1.0, 0.14, 28)),
         }
 
@@ -290,7 +292,8 @@ class GamesAR3DRenderer:
         elif g == "classic_darts":
             self._render_classic_darts(games_engine.classic_darts, now, aim)
         elif g == "face_darts":
-            self._render_face_darts(games_engine.face_darts, face_state, open_palms, now)
+            stuck = games_engine.bus.get_stuck_darts() if hasattr(games_engine, "bus") else []
+            self._render_face_darts(games_engine.face_darts, stuck, face_state, open_palms, now)
         elif g == "mouth_catch":
             self._render_mouth_catch(games_engine.mouth_catch, now)
         elif g == "rare_answer":
@@ -460,16 +463,58 @@ class GamesAR3DRenderer:
             rm = bm @ _mat_translate(ax, 0.032, ay) @ _mat_scale(0.024, 0.02, 0.024)
             self._draw_mesh("torus", rm, (pr, pg, pb), roughness=0.1, emissive=(pr * 0.6, pg * 0.6, pb * 0.6))
 
-    def _render_face_darts(self, fd, face_state, open_palms: list, now: float) -> None:
-        # 3D palm shield ring when defending + incoming 3D darts in Z depth
+    def _draw_3d_suction_dart(self, base_m: np.ndarray, shaft_rgb: tuple[float, float, float]) -> None:
+        # Local +Y is tip/suction cup forward, -Y is foam body & tail fins.
+        emiss = (shaft_rgb[0] * 0.14, shaft_rgb[1] * 0.14, shaft_rgb[2] * 0.14)
+        self._draw_mesh("cup", base_m @ _mat_translate(0.0, 0.052, 0.0) @ _mat_scale(0.024, 0.015, 0.024), (0.14, 0.16, 0.22), roughness=0.34)
+        self._draw_mesh("torus", base_m @ _mat_translate(0.0, 0.064, 0.0) @ _mat_scale(0.021, 0.026, 0.021), (0.28, 0.31, 0.40), roughness=0.28)
+        self._draw_mesh("torus", base_m @ _mat_translate(0.0, 0.032, 0.0) @ _mat_scale(0.014, 0.018, 0.014), (0.86, 0.90, 0.96), roughness=0.10)
+        self._draw_mesh("cup", base_m @ _mat_translate(0.0, -0.014, 0.0) @ _mat_scale(0.014, 0.038, 0.014), shaft_rgb, roughness=0.25, emissive=emiss)
+        self._draw_mesh("sphere", base_m @ _mat_translate(0.0, -0.048, 0.0) @ _mat_scale(0.011, 0.011, 0.011), shaft_rgb, roughness=0.25, emissive=emiss)
+        self._draw_mesh("box", base_m @ _mat_translate(0.0, -0.058, 0.0) @ _mat_scale(0.034, 0.028, 0.004), (0.96, 0.97, 0.99), roughness=0.20, emissive=(0.08, 0.09, 0.11))
+        self._draw_mesh("box", base_m @ _mat_translate(0.0, -0.058, 0.0) @ _mat_rot_y(math.pi * 0.5) @ _mat_scale(0.034, 0.028, 0.004), (0.80, 0.95, 1.00), roughness=0.20, emissive=(0.06, 0.12, 0.16))
+
+    def _render_face_darts(self, fd, stuck_darts: list, face_state, open_palms: list, now: float) -> None:
+        # 1. Dual counter-rotating 3D hex palm shield
         if open_palms:
             px, py, pr = open_palms[0]
             px_pix = float(px) * self.width if float(px) <= 1.5 else float(px)
             py_pix = float(py) * self.height if float(py) <= 1.5 else float(py)
             pr_pix = float(pr) * self.width if float(pr) <= 1.0 else float(pr)
             wp, _ = self.r3d.grip_world_pos(px_pix, py_pix, max(70.0, pr_pix * 0.9))
-            sm = _mat_translate(float(wp[0]), float(wp[1]), float(wp[2]) + 0.08) @ _mat_rot_x(math.pi * 0.5) @ _mat_rot_y(now * 2.5) @ _mat_scale(0.16, 0.08, 0.16)
-            self._draw_mesh("torus", sm, (0.30, 0.90, 1.00), alpha=0.88, roughness=0.15, emissive=(0.12, 0.45, 0.65))
+            sm = _mat_translate(float(wp[0]), float(wp[1]), float(wp[2]) + 0.08) @ _mat_rot_x(math.pi * 0.5)
+            self._draw_mesh("torus", sm @ _mat_rot_y(now * 2.5) @ _mat_scale(0.18, 0.10, 0.18), (0.26, 0.90, 1.00), alpha=0.90, roughness=0.14, emissive=(0.14, 0.48, 0.72))
+            self._draw_mesh("torus", sm @ _mat_rot_y(-now * 3.8) @ _mat_scale(0.12, 0.12, 0.12), (0.96, 0.40, 0.86), alpha=0.88, roughness=0.14, emissive=(0.34, 0.10, 0.30))
+            self._draw_mesh("disc", sm @ _mat_scale(0.155, 0.05, 0.155), (0.34, 0.92, 1.00), alpha=0.26, roughness=0.10, emissive=(0.10, 0.36, 0.52))
+            for k in range(6):
+                a = k * (math.tau / 6.0) + now * 1.4
+                nm = sm @ _mat_translate(math.cos(a) * 0.175, 0.0, math.sin(a) * 0.175) @ _mat_scale(0.016, 0.016, 0.016)
+                self._draw_mesh("sphere", nm, (0.72, 0.96, 1.00), roughness=0.10, emissive=(0.25, 0.55, 0.70))
+
+        # 2. Stuck 3D suction darts anchored onto detected face landmarks
+        for sd in stuck_darts:
+            age = max(0.0, now - float(sd.created))
+            if age > float(sd.ttl):
+                continue
+            if face_state is not None:
+                sc = max(90.0, float(face_state.face_scale_px))
+                cx = float(face_state.nose_px[0]) + float(sd.dx_norm) * sc
+                cy = float(face_state.nose_px[1]) + float(sd.dy_norm) * sc
+            else:
+                cx, cy = float(sd.fallback_xy[0]), float(sd.fallback_xy[1])
+                sc = 145.0
+            cy += float(sd.fall_y)
+            if cy > self.height + 80:
+                continue
+            wp, _ = self.r3d.grip_world_pos(cx, cy, max(85.0, sc * 0.62))
+            wobble = math.sin(age * 36.0) * math.exp(-age * 6.0) * 0.24
+            ang = math.radians(float(sd.angle_deg) * 0.6)
+            bgr = sd.color_bgr
+            rgb = (float(bgr[2]) / 255.0, float(bgr[1]) / 255.0, float(bgr[0]) / 255.0)
+            dm = _mat_translate(float(wp[0]), float(wp[1]), float(wp[2]) + 0.05) @ _mat_rot_z(ang) @ _mat_rot_x(-math.pi * 0.5 + 0.28 + wobble) @ _mat_scale(1.18, 1.18, 1.18)
+            self._draw_3d_suction_dart(dm, rgb)
+
+        # 3. Incoming 3D suction darts in depth flight
         for d in getattr(fd, "active", []):
             u = min(1.0, float(d.elapsed) / max(float(d.duration), 1e-3))
             cx = float(d.start_x) + (float(d.target_x) - float(d.start_x)) * u
@@ -479,8 +524,31 @@ class GamesAR3DRenderer:
             wx = (cx - 0.5) * 0.9 * z
             wy = (0.5 - cy) * 0.5 * z
             wz = -0.35 - dz * 1.1
-            dm = _mat_translate(wx, wy, wz) @ _mat_rot_x(-math.pi * 0.5) @ _mat_scale(0.018, 0.075, 0.018)
-            self._draw_mesh("cup", dm, (0.96, 0.34, 0.56), roughness=0.25)
+            dm = _mat_translate(wx, wy, wz) @ _mat_rot_x(-math.pi * 0.5) @ _mat_rot_y(now * 8.5) @ _mat_scale(1.15, 1.15, 1.15)
+            self._draw_3d_suction_dart(dm, (0.96, 0.34, 0.56))
+
+    def _draw_3d_donut(self, dm: np.ndarray) -> None:
+        self._draw_mesh("donut_dough", dm, (0.92, 0.68, 0.36), roughness=0.45)
+        icing_m = dm @ _mat_translate(0.0, 0.16, 0.0) @ _mat_scale(0.98, 0.84, 0.98)
+        self._draw_mesh("donut_icing", icing_m, (0.98, 0.38, 0.72), roughness=0.12, emissive=(0.12, 0.03, 0.08))
+        for k in range(6):
+            a = k * (math.tau / 6.0) + 0.35
+            dr = 0.96 + (k % 2) * 0.05
+            drop_y = 0.02 - (k % 3) * 0.04
+            sm = dm @ _mat_translate(math.cos(a) * dr, drop_y, math.sin(a) * dr) @ _mat_scale(0.14, 0.19, 0.14)
+            self._draw_mesh("sphere", sm, (0.98, 0.38, 0.72), roughness=0.12)
+        sprinkle_cols = [
+            (0.28, 0.92, 0.98),
+            (0.98, 0.86, 0.24),
+            (0.45, 0.96, 0.58),
+            (0.98, 0.98, 0.98),
+            (0.98, 0.42, 0.32),
+        ]
+        for k in range(10):
+            a = k * (math.tau / 10.0) + 0.18
+            rad = 0.66 + (k % 3) * 0.14
+            spm = dm @ _mat_translate(math.cos(a) * rad, 0.50, math.sin(a) * rad) @ _mat_rot_y(a + 0.7) @ _mat_rot_z(0.15) @ _mat_scale(0.11, 0.045, 0.045)
+            self._draw_mesh("box", spm, sprinkle_cols[k % len(sprinkle_cols)], roughness=0.22)
 
     def _render_mouth_catch(self, mc, now: float) -> None:
         for f in getattr(mc, "active", []):
@@ -491,9 +559,8 @@ class GamesAR3DRenderer:
             wx = (cx - 0.5) * 0.9
             wy = (0.5 - cy) * 0.55
             wz = -0.32 - fz * 1.1
-            dm = _mat_translate(wx, wy, wz) @ _mat_rot_x(now * 5.0) @ _mat_rot_y(now * 3.5) @ _mat_scale(0.048, 0.048, 0.048)
-            self._draw_mesh("torus", dm, (0.88, 0.62, 0.34), roughness=0.45)
-            self._draw_mesh("torus", dm @ _mat_translate(0.0, 0.12, 0.0) @ _mat_scale(0.92, 0.72, 0.92), (0.96, 0.42, 0.74), roughness=0.18)
+            dm = _mat_translate(wx, wy, wz) @ _mat_rot_x(0.85 + now * 4.5) @ _mat_rot_y(now * 3.2) @ _mat_scale(0.056, 0.056, 0.056)
+            self._draw_3d_donut(dm)
 
     def _render_krillion_shrimp(self, krill, face_state, now: float) -> None:
         # 3D multi-segment tier-colored shrimp/krill floating right beside player's webcam head!
